@@ -33,6 +33,44 @@ class TranslationServiceTest {
 
 
     @Test
+    fun malformedBatchResponsesFallbackWithoutCachingMisalignedText() = runBlocking {
+        listOf("missing", "reordered", "trailing").forEach { malformedMode ->
+            val provider = MalformedBatchProvider(malformedMode)
+            val registry = TranslationProviderRegistry(setOf(provider))
+            val cache = Mockito.mock(TranslationFileCache::class.java)
+            whenever(cache.get(Mockito.anyString())).thenReturn(null)
+            val cachedValues = mutableListOf<String>()
+            Mockito.doAnswer { invocation ->
+                cachedValues += invocation.getArgument<String>(1)
+                null
+            }.`when`(cache).put(Mockito.anyString(), Mockito.anyString())
+            val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+            val service = TranslationService(registry, cache, configStore)
+
+            val translated = service.translateHtml(
+                html = "<p>alpha</p><p>beta</p>",
+                targetLanguage = "zh-CN",
+                providerId = provider.id,
+                sourceLanguage = "en",
+            )
+
+            assertEquals(
+                "Fallback must preserve the original segment order for mode=$malformedMode",
+                listOf("translated:alpha", "translated:beta"),
+                Jsoup.parseBodyFragment(translated).select("p").map { it.text() },
+            )
+            assertEquals("One batch request plus two fallback requests are expected.", 3, provider.requests.size)
+            assertEquals("alpha", provider.requests[1])
+            assertEquals("beta", provider.requests[2])
+            assertEquals(
+                "Only individual fallback results may enter the cache for mode=$malformedMode",
+                listOf("translated:alpha", "translated:beta"),
+                cachedValues,
+            )
+        }
+    }
+
+    @Test
     fun automaticSourceLanguageDetectionIsPassedToEveryTranslationRequest() = runBlocking {
         val provider = DetectingProvider()
         val registry = TranslationProviderRegistry(setOf(provider))
@@ -334,6 +372,37 @@ class TranslationServiceTest {
             requestCount++
             requests += request.text
             return TranslationResponse("translated:${request.text}", request.sourceLanguage, id)
+        }
+    }
+
+    private class MalformedBatchProvider(private val mode: String) : TranslationProvider {
+        override val id = "test_malformed_batch_$mode"
+        override val capabilities = TranslationProviderCapabilities(
+            requiresNetwork = true,
+            supportsBatching = true,
+        )
+        val requests = mutableListOf<String>()
+
+        override suspend fun translate(request: TranslationRequest): TranslationResponse {
+            requests += request.text
+            val markers = MARKER.findAll(request.text).toList()
+            if (markers.size != 3) {
+                return TranslationResponse("translated:${request.text}", request.sourceLanguage, id)
+            }
+
+            val first = request.text.substring(markers[0].range.last + 1, markers[1].range.first)
+            val second = request.text.substring(markers[1].range.last + 1, markers[2].range.first)
+            val result = when (mode) {
+                "missing" -> "${markers[0].value}translated:$first${markers[2].value}"
+                "reordered" -> "${markers[0].value}translated:$second${markers[2].value}translated:$first${markers[1].value}"
+                "trailing" -> "${markers[0].value}translated:$first${markers[1].value}translated:$second${markers[2].value}unexpected"
+                else -> error("Unknown malformed batch mode: $mode")
+            }
+            return TranslationResponse(result, request.sourceLanguage, id)
+        }
+
+        private companion object {
+            val MARKER = Regex("<\\\\|RY_TRANSLATION_SEGMENT_[^>]*\\\\|>")
         }
     }
 
