@@ -13,6 +13,7 @@ import kotlin.collections.any
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -271,10 +272,14 @@ constructor(
     private val currentArticle: Article?
         get() = readingUiState.value.articleWithFeed?.article
 
+    private var translationJob: Job? = null
+
     private val currentFeed: Feed?
         get() = readingUiState.value.articleWithFeed?.feed
 
     fun initData(articleId: String, listIndex: Int? = null) {
+        translationJob?.cancel()
+        translationJob = null
         viewModelScope.launch {
             val snapshotList = articleListUseCase.itemSnapshotList
 
@@ -325,6 +330,8 @@ constructor(
     }
 
     fun clearReadingData() {
+        translationJob?.cancel()
+        translationJob = null
         _readingUiState.update { ReadingUiState() }
         _readerState.update { ReaderState() }
     }
@@ -345,6 +352,8 @@ constructor(
     }
 
     fun renderDescriptionContent() {
+        translationJob?.cancel()
+        translationJob = null
         _readerState.update {
             it.copy(
                 content = ReaderState.Description(content = currentArticle?.rawDescription ?: ""),
@@ -358,6 +367,8 @@ constructor(
     }
 
     fun renderFullContent() {
+        translationJob?.cancel()
+        translationJob = null
         val fetchJob =
             viewModelScope.launch {
                 readerCacheHelper
@@ -435,7 +446,8 @@ constructor(
         val sourceContent = when (val content = state.content) {
             is ReaderState.Description -> content.content
             is ReaderState.FullContent -> content.content
-            else -> currentArticle?.rawDescription ?: return
+            is ReaderState.Error -> currentArticle?.rawDescription ?: return
+            ReaderState.Loading -> return
         }
         if (sourceContent.isBlank()) return
 
@@ -447,7 +459,7 @@ constructor(
             it.copy(isTranslating = true, translationError = null)
         }
 
-        viewModelScope.launch {
+        translationJob = viewModelScope.launch {
             try {
                 val engine = translationService.selectedEngine()
                 val translatedContent = translationService.translateHtml(

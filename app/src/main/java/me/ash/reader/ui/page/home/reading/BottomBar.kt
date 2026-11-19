@@ -139,7 +139,7 @@ fun BottomBar(
                             modifier = Modifier.size(40.dp),
                             disabled = isTranslating,
                             imageVector = Icons.Outlined.Language,
-                            contentDescription = if (isTranslated) "Show original article" else "Translate article",
+                            contentDescription = if (isTranslated) "显示原文" else "翻译文章",
                             tint = if (isTranslated) {
                                 MaterialTheme.colorScheme.onSecondaryContainer
                             } else {
