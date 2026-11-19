@@ -341,6 +341,7 @@ fun ReadingPage(
                         },
                         onBoldCharacters = { (!boldCharacters).put(context, coroutineScope) },
                         onTranslate = { viewModel.toggleTranslation() },
+                        onCancelTranslation = { viewModel.cancelTranslation() },
                         onReadAloud = {
                             viewModel.textToSpeechManager.readHtml(
                                 (if (readerState.isTranslated) readerState.translatedContent else null)

@@ -446,6 +446,15 @@ constructor(
      * Translate the currently displayed article. The original RSS/HTML is never overwritten;
      * switching the state back to false immediately restores the source content.
      */
+    fun cancelTranslation() {
+        if (!_readerState.value.isTranslating) return
+        translationJob?.cancel()
+        translationJob = null
+        _readerState.update {
+            it.copy(isTranslating = false, translationProgress = null)
+        }
+    }
+
     fun toggleTranslation() {
         val state = _readerState.value
         if (state.articleId == null || state.isTranslating) return
