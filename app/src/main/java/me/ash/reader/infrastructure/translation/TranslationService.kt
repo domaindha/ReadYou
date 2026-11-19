@@ -162,11 +162,11 @@ class TranslationService @Inject constructor(
             )
         }
 
-        // ML Kit is local: do not send artificial sentinels through a translation model.
-        if (engine == TranslationEngine.ON_DEVICE) {
+        // Providers that do not declare batch support receive one original segment per request.
+        if (!provider.capabilities.supportsBatching) {
             for (index in missingIndices) translateOne(index)
         } else {
-            // Bounded batches reduce remote request count without creating oversized prompts.
+            // Bounded batches reduce request count without creating oversized prompts.
             for (batch in buildBatches(missingIndices, segments)) {
                 val markers = (0..batch.size).map(::batchMarker)
                 val payload = buildString {
