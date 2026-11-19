@@ -106,6 +106,9 @@ class MlKitTranslationProvider @Inject constructor() : TranslationProvider, Tran
 
     private fun toMlKitLanguage(tag: String): String? {
         val normalized = tag.replace('_', '-')
+        // ML Kit exposes only the generic "zh" model (Simplified Chinese), not a
+        // Traditional Chinese model. Do not silently map zh-TW to zh.
+        if (normalized.equals("zh-TW", ignoreCase = true)) return null
         return TranslateLanguage.fromLanguageTag(normalized)
             ?: TranslateLanguage.fromLanguageTag(Locale.forLanguageTag(normalized).language)
     }
