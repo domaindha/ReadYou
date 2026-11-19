@@ -44,8 +44,13 @@ class HttpJsonTranslationProvider @Inject constructor(
 
         val endpoint = config.endpoint.toHttpUrlOrNull()
             ?: throw IllegalArgumentException("The translation API endpoint is not a valid HTTP URL.")
-        if (endpoint.scheme != "https" && config.apiKey.isNotBlank()) {
-            throw IllegalArgumentException("An API key may only be sent to an HTTPS endpoint.")
+        val hasSensitiveHeaders = config.headers.keys.any { name ->
+            name.equals("Authorization", ignoreCase = true) ||
+                name.equals("X-API-Key", ignoreCase = true) ||
+                name.equals("Cookie", ignoreCase = true)
+        }
+        if (endpoint.scheme != "https" && (config.apiKey.isNotBlank() || hasSensitiveHeaders)) {
+            throw IllegalArgumentException("Credentials and sensitive headers may only be sent to an HTTPS endpoint.")
         }
 
         val requestJson = runCatching { JSONObject(config.requestTemplate) }
