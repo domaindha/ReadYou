@@ -37,6 +37,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -80,6 +82,9 @@ fun TranslationSettingsPage(
     // Do not place API credentials in Android saved-instance-state bundles.
     var apiKey by remember(selectedProviderId) { mutableStateOf(initialConfig?.apiKey.orEmpty()) }
     var model by rememberSaveable(selectedProviderId) { mutableStateOf(initialConfig?.model.orEmpty()) }
+    var timeoutSecondsText by rememberSaveable(selectedProviderId) {
+        mutableStateOf((initialConfig?.timeoutSeconds ?: 45L).toString())
+    }
     var headersText by rememberSaveable(selectedProviderId) {
         mutableStateOf(
             initialConfig?.headers?.let { headers ->
@@ -118,7 +123,9 @@ fun TranslationSettingsPage(
             headers = headers,
             requestTemplate = requestTemplate,
             responsePath = responsePath.trim(),
-            timeoutSeconds = initialConfig?.timeoutSeconds ?: 45L,
+            timeoutSeconds = timeoutSecondsText.toLongOrNull()
+                ?.takeIf { it in 5L..180L }
+                ?: throw IllegalArgumentException("请求超时必须设置为 5 到 180 秒。"),
         )
     }
 
@@ -273,6 +280,15 @@ fun TranslationSettingsPage(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     label = { Text("模型名称（可选）") },
+                )
+                OutlinedTextField(
+                    value = timeoutSecondsText,
+                    onValueChange = { timeoutSecondsText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    label = { Text("请求超时（秒，5–180）") },
+                    supportingText = { Text("默认 45 秒，连接、读取和总请求时间均受此限制。") },
                 )
                 OutlinedTextField(
                     value = headersText,
