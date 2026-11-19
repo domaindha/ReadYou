@@ -100,12 +100,19 @@ class TranslationApiConfigStore @Inject constructor(
 
     fun setSourceLanguage(languageTag: String) { preferences.edit().putString(KEY_SOURCE_LANGUAGE, languageTag.trim()).apply() }
 
-    fun selectedEngine(): TranslationEngine =
-        TranslationEngine.fromId(preferences.getString(KEY_ENGINE, TranslationEngine.ON_DEVICE.id))
+    fun selectedProviderId(): String =
+        preferences.getString(KEY_PROVIDER, null)
+            ?: preferences.getString(KEY_ENGINE, TranslationEngine.ON_DEVICE.id)
+            ?: TranslationEngine.ON_DEVICE.id
 
-    fun setSelectedEngine(engine: TranslationEngine) {
-        preferences.edit().putString(KEY_ENGINE, engine.id).apply()
+    fun setSelectedProviderId(providerId: String) {
+        require(providerId.isNotBlank()) { "Translation provider ID is required." }
+        preferences.edit().putString(KEY_PROVIDER, providerId.trim()).apply()
     }
+
+    fun selectedEngine(): TranslationEngine = TranslationEngine.fromId(selectedProviderId())
+
+    fun setSelectedEngine(engine: TranslationEngine) = setSelectedProviderId(engine.id)
 
     private fun storageKey(key: String, providerId: String): String =
         if (providerId == TranslationEngine.HTTP_JSON.id) key else "${providerId}_$key"
@@ -158,6 +165,7 @@ class TranslationApiConfigStore @Inject constructor(
         const val KEY_RESPONSE_PATH = "response_path"
         const val KEY_TIMEOUT = "timeout_seconds"
         const val KEY_ENGINE = "selected_engine"
+        const val KEY_PROVIDER = "selected_provider"
         const val KEY_TARGET_LANGUAGE = "target_language"
         const val KEY_SOURCE_LANGUAGE = "source_language"
     }
