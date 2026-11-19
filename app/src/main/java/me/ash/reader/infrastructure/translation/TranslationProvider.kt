@@ -15,3 +15,13 @@ interface TranslationProvider {
     val capabilities: TranslationProviderCapabilities
     suspend fun translate(request: TranslationRequest): TranslationResponse
 }
+
+interface TranslationLanguageDetector {
+    suspend fun detectLanguage(text: String): String
+}
+
+interface TranslationModelManager {
+    suspend fun downloadModel(sourceLanguage: String, targetLanguage: String)
+    suspend fun downloadedModels(): List<String>
+    suspend fun deleteModel(languageTag: String)
+}
