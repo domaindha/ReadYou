@@ -38,7 +38,11 @@ class TranslationServiceTest {
         val providerB = CountingProvider("provider_b")
         val registry = TranslationProviderRegistry(setOf(providerA, providerB))
         val cache = Mockito.mock(TranslationFileCache::class.java)
-        whenever(cache.get(Mockito.anyString())).thenReturn(null)
+        val cacheKeys = mutableListOf<String>()
+        Mockito.doAnswer { invocation ->
+            cacheKeys += invocation.getArgument<String>(0)
+            null
+        }.`when`(cache).get(Mockito.anyString())
         val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
         val initialA = testConfiguration(endpoint = "https://a.example/translate", apiKey = "key-a")
         val changedA = initialA.copy(model = "model-v2")
@@ -51,10 +55,8 @@ class TranslationServiceTest {
         service.translateText("same article text", "zh-CN", "en", providerId = "provider_b")
         service.translateText("same article text", "zh-CN", "en", providerId = "provider_a")
 
-        val keys = org.mockito.ArgumentCaptor.forClass(String::class.java)
-        Mockito.verify(cache, Mockito.times(3)).get(keys.capture())
-        val captured = keys.allValues
-        assertEquals(3, captured.distinct().size)
+        assertEquals(3, cacheKeys.size)
+        assertEquals(3, cacheKeys.distinct().size)
         assertEquals(3, providerA.requestCount + providerB.requestCount)
     }
 
@@ -63,7 +65,11 @@ class TranslationServiceTest {
         val provider = CountingProvider("provider_languages")
         val registry = TranslationProviderRegistry(setOf(provider))
         val cache = Mockito.mock(TranslationFileCache::class.java)
-        whenever(cache.get(Mockito.anyString())).thenReturn(null)
+        val cacheKeys = mutableListOf<String>()
+        Mockito.doAnswer { invocation ->
+            cacheKeys += invocation.getArgument<String>(0)
+            null
+        }.`when`(cache).get(Mockito.anyString())
         val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
         val base = testConfiguration(endpoint = "https://api.example/translate")
         whenever(configStore.loadConfiguration(provider.id)).thenReturn(
@@ -79,9 +85,8 @@ class TranslationServiceTest {
         service.translateText("hello", "ja", "en", providerId = provider.id)
         service.translateText("hello", "zh-CN", "ja", providerId = provider.id)
 
-        val keys = org.mockito.ArgumentCaptor.forClass(String::class.java)
-        Mockito.verify(cache, Mockito.times(4)).get(keys.capture())
-        assertEquals(3, keys.allValues.distinct().size)
+        assertEquals(4, cacheKeys.size)
+        assertEquals(3, cacheKeys.distinct().size)
     }
 
     private fun testConfiguration(
