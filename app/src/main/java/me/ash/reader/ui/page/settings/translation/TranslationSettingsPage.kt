@@ -88,7 +88,7 @@ fun TranslationSettingsPage(
     var status by rememberSaveable { mutableStateOf("") }
     var busy by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(selectedProviderId) {
         viewModel.refreshDownloadedModels()
     }
 
