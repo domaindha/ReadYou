@@ -20,6 +20,15 @@ class TranslationService @Inject constructor(
 ) {
     fun selectedEngine(): TranslationEngine = configStore.selectedEngine()
 
+    fun selectedProviderId(): String = configStore.selectedProviderId()
+
+    fun availableProviders(): List<TranslationProviderDescriptor> = providerRegistry.descriptors()
+
+    fun selectProvider(providerId: String) {
+        providerRegistry.requireProvider(providerId)
+        configStore.setSelectedProviderId(providerId)
+    }
+
     fun targetLanguage(): String = configStore.targetLanguage()
 
     fun sourceLanguage(): String = configStore.sourceLanguage()
@@ -28,17 +37,19 @@ class TranslationService @Inject constructor(
 
     fun setTargetLanguage(languageTag: String) = configStore.setTargetLanguage(languageTag)
 
-    fun selectEngine(engine: TranslationEngine) = configStore.setSelectedEngine(engine)
+    fun selectEngine(engine: TranslationEngine) = selectProvider(engine.id)
 
     suspend fun translateText(
         text: String,
         targetLanguage: String,
         sourceLanguage: String? = null,
-        engine: TranslationEngine = selectedEngine(),
+        engine: TranslationEngine? = null,
+        providerId: String? = null,
     ): TranslationResponse {
-        if (text.isBlank()) return TranslationResponse(text, sourceLanguage, engine.id)
+        val selectedId = providerId ?: engine?.id ?: configStore.selectedProviderId()
+        if (text.isBlank()) return TranslationResponse(text, sourceLanguage, selectedId)
 
-        val provider = providerFor(engine)
+        val provider = providerFor(selectedId)
         val key = createCacheKey(
             provider.id,
             cacheRevision(provider.id),
@@ -62,7 +73,8 @@ class TranslationService @Inject constructor(
     suspend fun translateHtml(
         html: String,
         targetLanguage: String,
-        engine: TranslationEngine = selectedEngine(),
+        engine: TranslationEngine? = null,
+        providerId: String? = null,
         sourceLanguage: String? = configStore.sourceLanguage().takeUnless { it == "auto" },
         onProgress: (Float) -> Unit = {},
     ): String {
@@ -75,7 +87,7 @@ class TranslationService @Inject constructor(
         collectTranslatableTextNodes(body, textNodes)
         if (textNodes.isEmpty()) return html
 
-        val selectedProvider = providerFor(engine)
+        val selectedProvider = providerFor(providerId ?: engine?.id ?: configStore.selectedProviderId())
         val resolvedSourceLanguage = sourceLanguage ?: if (selectedProvider.capabilities.supportsLanguageDetection) {
             (selectedProvider as? TranslationLanguageDetector)
                 ?.detectLanguage(body.text())?.takeIf { it != "und" }
@@ -89,7 +101,7 @@ class TranslationService @Inject constructor(
             segments = flattenedChunks,
             sourceLanguage = resolvedSourceLanguage,
             targetLanguage = targetLanguage,
-            engine = engine,
+            providerId = selectedProvider.id,
         )
 
         var translatedIndex = 0
@@ -104,13 +116,21 @@ class TranslationService @Inject constructor(
     }
 
     suspend fun downloadOnDeviceModel(sourceLanguage: String, targetLanguage: String) =
-        modelManager().downloadModel(sourceLanguage, targetLanguage)
+        modelManager(TranslationEngine.ON_DEVICE.id).downloadModel(sourceLanguage, targetLanguage)
 
     suspend fun getDownloadedOnDeviceModels(): List<String> =
-        modelManager().downloadedModels()
+        modelManager(TranslationEngine.ON_DEVICE.id).downloadedModels()
 
     suspend fun deleteOnDeviceModel(languageTag: String) =
-        modelManager().deleteModel(languageTag)
+        modelManager(TranslationEngine.ON_DEVICE.id).deleteModel(languageTag)
+
+    suspend fun downloadProviderModel(providerId: String, sourceLanguage: String, targetLanguage: String) =
+        modelManager(providerId).downloadModel(sourceLanguage, targetLanguage)
+
+    suspend fun getProviderModels(providerId: String): List<String> = modelManager(providerId).downloadedModels()
+
+    suspend fun deleteProviderModel(providerId: String, languageTag: String) =
+        modelManager(providerId).deleteModel(languageTag)
 
     suspend fun clearTranslationCache() = cache.clear()
 
@@ -127,11 +147,11 @@ class TranslationService @Inject constructor(
         segments: List<String>,
         sourceLanguage: String?,
         targetLanguage: String,
-        engine: TranslationEngine,
+        providerId: String,
     ): List<String> {
         if (segments.isEmpty()) return emptyList()
 
-        val provider = providerFor(engine)
+        val provider = providerFor(providerId)
         val revision = cacheRevision(provider.id)
         val results = MutableList<String?>(segments.size) { null }
         val missingIndices = mutableListOf<Int>()
@@ -287,12 +307,17 @@ class TranslationService @Inject constructor(
             .joinToString("") { "%02x".format(it) }
     }
 
-    private fun providerFor(engine: TranslationEngine): TranslationProvider =
-        providerRegistry.requireProvider(engine.id)
+    private fun providerFor(providerId: String): TranslationProvider =
+        providerRegistry.requireProvider(providerId)
 
-    private fun modelManager(): TranslationModelManager =
-        providerRegistry.requireProvider(TranslationEngine.ON_DEVICE.id) as? TranslationModelManager
-            ?: throw IllegalStateException("The registered on-device provider does not support model management.")
+    private fun modelManager(providerId: String): TranslationModelManager {
+        val provider = providerRegistry.requireProvider(providerId)
+        check(provider.capabilities.supportsModelManagement) {
+            "Translation provider '$providerId' does not support model management."
+        }
+        return provider as? TranslationModelManager
+            ?: throw IllegalStateException("Provider '$providerId' declares model management but does not implement it.")
+    }
 
     private fun collectTranslatableTextNodes(element: Element, result: MutableList<TextNode>) {
         for (child in element.childNodes()) {
