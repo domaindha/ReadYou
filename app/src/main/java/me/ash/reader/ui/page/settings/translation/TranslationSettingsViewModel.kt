@@ -64,18 +64,18 @@ class TranslationSettingsViewModel @Inject constructor(
     fun refreshDownloadedModels() {
         viewModelScope.launch {
             _downloadedModels.value =
-                runCatching { translationService.getDownloadedOnDeviceModels() }
+                runCatching { translationService.getProviderModels(_selectedProviderId.value) }
                     .getOrDefault(emptyList())
         }
     }
 
     suspend fun downloadModel(sourceLanguage: String, targetLanguage: String) {
-        translationService.downloadOnDeviceModel(sourceLanguage, targetLanguage)
+        translationService.downloadProviderModel(_selectedProviderId.value, sourceLanguage, targetLanguage)
         refreshDownloadedModels()
     }
 
     suspend fun deleteModel(languageTag: String) {
-        translationService.deleteOnDeviceModel(languageTag)
+        translationService.deleteProviderModel(_selectedProviderId.value, languageTag)
         refreshDownloadedModels()
     }
 }
