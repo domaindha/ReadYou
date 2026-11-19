@@ -64,7 +64,7 @@ class TranslationService @Inject constructor(
         html: String,
         targetLanguage: String,
         engine: TranslationEngine = selectedEngine(),
-        sourceLanguage: String? = sourceLanguage().takeUnless { it == "auto" },
+        sourceLanguage: String? = configStore.sourceLanguage().takeUnless { it == "auto" },
         onProgress: (Float) -> Unit = {},
     ): String {
         if (html.isBlank()) return html
