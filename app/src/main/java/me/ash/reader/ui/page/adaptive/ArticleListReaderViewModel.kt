@@ -454,6 +454,7 @@ constructor(
         val articleId = state.articleId
         val sourceTitle = state.title.orEmpty()
         val targetLanguage = translationService.targetLanguage()
+        val sourceLanguage = translationService.sourceLanguage().takeUnless { it == "auto" }
 
         _readerState.update {
             it.copy(isTranslating = true, translationError = null)
@@ -466,11 +467,13 @@ constructor(
                     html = sourceContent,
                     targetLanguage = targetLanguage,
                     engine = engine,
+                    sourceLanguage = sourceLanguage,
                 )
                 val translatedTitle = translationService.translateText(
                     text = sourceTitle,
                     targetLanguage = targetLanguage,
                     engine = engine,
+                    sourceLanguage = sourceLanguage,
                 ).translatedText
 
                 _readerState.update { current ->
