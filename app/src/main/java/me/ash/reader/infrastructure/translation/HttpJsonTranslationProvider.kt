@@ -27,13 +27,18 @@ class HttpJsonTranslationProvider @Inject constructor(
     private val configStore: TranslationApiConfigStore,
 ) : TranslationProvider {
     override val id: String = TranslationEngine.HTTP_JSON.id
+    override val capabilities = TranslationProviderCapabilities(
+        requiresNetwork = true,
+        supportsBatching = true,
+        supportsCustomConfiguration = true,
+    )
 
     // Reuse a dedicated client with platform-default certificate validation.
     private val baseClient = OkHttpClient.Builder().build()
 
     override suspend fun translate(request: TranslationRequest): TranslationResponse {
         require(request.text.isNotBlank()) { "There is no text to translate." }
-        val config = configStore.loadConfiguration()
+        val config = configStore.loadConfiguration(id)
             ?: throw IllegalStateException("Configure a translation API before selecting this engine.")
 
         val endpoint = config.endpoint.toHttpUrlOrNull()
