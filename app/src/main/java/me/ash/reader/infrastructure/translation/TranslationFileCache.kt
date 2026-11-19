@@ -6,6 +6,8 @@ import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.ash.reader.infrastructure.di.IODispatcher
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,35 +22,50 @@ class TranslationFileCache @Inject constructor(
     @IODispatcher private val ioDispatcher: CoroutineDispatcher,
 ) {
     private val directory = File(context.filesDir, "translation_cache")
+    private val mutex = Mutex()
 
     suspend fun get(key: String): String? = withContext(ioDispatcher) {
-        val file = fileFor(key)
-        if (!file.isFile) return@withContext null
-        runCatching {
-            file.setLastModified(System.currentTimeMillis())
-            file.readText(Charsets.UTF_8)
-        }.getOrNull()
+        mutex.withLock {
+            val file = fileFor(key)
+            if (!file.isFile) return@withLock null
+            runCatching {
+                file.setLastModified(System.currentTimeMillis())
+                file.readText(Charsets.UTF_8).takeIf { it.isNotEmpty() }
+            }.getOrNull()
+        }
     }
 
     suspend fun put(key: String, value: String): Unit = withContext(ioDispatcher) {
-        if (value.length > MAX_ENTRY_CHARS) return@withContext
-        if (!directory.exists() && !directory.mkdirs()) return@withContext
+        mutex.withLock {
+            if (value.isEmpty() || value.length > MAX_ENTRY_CHARS) return@withLock
+            if (!directory.exists() && !directory.mkdirs()) return@withLock
 
-        val destination = fileFor(key)
-        val temporary = File(directory, "${destination.name}.tmp")
-        runCatching {
-            temporary.writeText(value, Charsets.UTF_8)
-            if (!temporary.renameTo(destination)) {
-                destination.writeText(value, Charsets.UTF_8)
+            val destination = fileFor(key)
+            val temporary = runCatching {
+                File.createTempFile("${destination.name}.", ".tmp", directory)
+            }.getOrNull() ?: return@withLock
+
+            try {
+                temporary.writeText(value, Charsets.UTF_8)
+                if (!temporary.renameTo(destination)) {
+                    // Cache writes are best-effort; retain a fallback for filesystems where
+                    // rename cannot replace an existing destination.
+                    destination.writeText(value, Charsets.UTF_8)
+                }
+                pruneOldEntries()
+            } catch (_: Exception) {
+                // A cache failure must never fail an otherwise successful translation.
+            } finally {
                 temporary.delete()
             }
-            pruneOldEntries()
         }
         Unit
     }
 
     suspend fun clear() = withContext(ioDispatcher) {
-        directory.listFiles()?.forEach { it.delete() }
+        mutex.withLock {
+            directory.listFiles()?.forEach { it.delete() }
+        }
     }
 
     private fun fileFor(key: String): File {

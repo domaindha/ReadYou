@@ -33,6 +33,76 @@ class TranslationServiceTest {
 
 
     @Test
+    fun automaticSourceLanguageDetectionIsPassedToEveryTranslationRequest() = runBlocking {
+        val provider = DetectingProvider()
+        val registry = TranslationProviderRegistry(setOf(provider))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        whenever(cache.get(Mockito.anyString())).thenReturn(null)
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        val service = TranslationService(registry, cache, configStore)
+
+        val translated = service.translateHtml(
+            html = "<p>bonjour le monde</p>",
+            targetLanguage = "zh-CN",
+            providerId = provider.id,
+            sourceLanguage = null,
+        )
+
+        assertEquals("translated:bonjour le monde", org.jsoup.Jsoup.parseBodyFragment(translated).selectFirst("p")?.text())
+        assertEquals("bonjour le monde", provider.detectedText)
+        assertEquals(listOf("fr"), provider.requestedSourceLanguages)
+    }
+
+    @Test
+    fun batchTranslationSplitsAtEightSegmentsAndPreservesEverySegment() = runBlocking {
+        val provider = RecordingBatchProvider()
+        val registry = TranslationProviderRegistry(setOf(provider))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        whenever(cache.get(Mockito.anyString())).thenReturn(null)
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        val service = TranslationService(registry, cache, configStore)
+        val html = (1..9).joinToString("") { "<p>text-$it</p>" }
+
+        val translated = service.translateHtml(
+            html = html,
+            targetLanguage = "zh-CN",
+            providerId = provider.id,
+            sourceLanguage = "en",
+        )
+
+        assertEquals(listOf(8, 1), provider.batchSizes)
+        assertEquals(
+            (1..9).map { "translated:text-$it" },
+            org.jsoup.Jsoup.parseBodyFragment(translated).select("p").map { it.text() },
+        )
+    }
+
+    @Test
+    fun failedProviderRequestIsNotWrittenToTranslationCache() = runBlocking {
+        val provider = FailingProvider()
+        val registry = TranslationProviderRegistry(setOf(provider))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        whenever(cache.get(Mockito.anyString())).thenReturn(null)
+        var cacheWrites = 0
+        Mockito.doAnswer {
+            cacheWrites++
+            null
+        }.`when`(cache).put(Mockito.anyString(), Mockito.anyString())
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        val service = TranslationService(registry, cache, configStore)
+
+        val error = org.junit.Assert.assertThrows(java.io.IOException::class.java) {
+            runBlocking {
+                service.translateText("hello", "zh-CN", "en", providerId = provider.id)
+            }
+        }
+
+        assertEquals("simulated network failure", error.message)
+        assertEquals(1, provider.requestCount)
+        assertEquals(0, cacheWrites)
+    }
+
+    @Test
     fun successfulTranslationIsStoredAndReusedFromCache() = runBlocking {
         val provider = CountingProvider("provider_cached")
         val registry = TranslationProviderRegistry(setOf(provider))
@@ -164,6 +234,71 @@ class TranslationServiceTest {
         requestTemplate = """{"text":"{{text}}"}""",
         responsePath = "text",
     )
+
+    private class DetectingProvider : TranslationProvider, TranslationLanguageDetector {
+        override val id = "provider_detecting"
+        override val capabilities = TranslationProviderCapabilities(
+            requiresNetwork = false,
+            supportsBatching = false,
+            supportsLanguageDetection = true,
+        )
+        var detectedText = ""
+        val requestedSourceLanguages = mutableListOf<String?>()
+
+        override suspend fun detectLanguage(text: String): String {
+            detectedText = text
+            return "fr"
+        }
+
+        override suspend fun translate(request: TranslationRequest): TranslationResponse {
+            requestedSourceLanguages += request.sourceLanguage
+            return TranslationResponse("translated:${request.text}", request.sourceLanguage, id)
+        }
+    }
+
+    private class RecordingBatchProvider : TranslationProvider {
+        override val id = "provider_batch"
+        override val capabilities = TranslationProviderCapabilities(
+            requiresNetwork = true,
+            supportsBatching = true,
+        )
+        val batchSizes = mutableListOf<Int>()
+
+        override suspend fun translate(request: TranslationRequest): TranslationResponse {
+            val markers = MARKER.findAll(request.text).toList()
+            batchSizes += markers.size - 1
+            val result = buildString {
+                markers.forEachIndexed { index, marker ->
+                    append(marker.value)
+                    if (index < markers.lastIndex) {
+                        val start = marker.range.last + 1
+                        val end = markers[index + 1].range.first
+                        append("translated:")
+                        append(request.text.substring(start, end))
+                    }
+                }
+            }
+            return TranslationResponse(result, request.sourceLanguage, id)
+        }
+
+        private companion object {
+            val MARKER = Regex("<\\|RY_TRANSLATION_SEGMENT_[^>]*\\|>")
+        }
+    }
+
+    private class FailingProvider : TranslationProvider {
+        override val id = "provider_failing"
+        override val capabilities = TranslationProviderCapabilities(
+            requiresNetwork = true,
+            supportsBatching = false,
+        )
+        var requestCount = 0
+
+        override suspend fun translate(request: TranslationRequest): TranslationResponse {
+            requestCount++
+            throw java.io.IOException("simulated network failure")
+        }
+    }
 
     private class CountingProvider(override val id: String) : TranslationProvider {
         override val capabilities = TranslationProviderCapabilities(
