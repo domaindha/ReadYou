@@ -21,7 +21,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
  * translation work is performed by ML Kit on the device.
  */
 @Singleton
-class MlKitTranslationProvider @Inject constructor() : TranslationProvider {
+class MlKitTranslationProvider @Inject constructor() : TranslationProvider, TranslationLanguageDetector, TranslationModelManager {
     override val id: String = TranslationEngine.ON_DEVICE.id
     override val capabilities = TranslationProviderCapabilities(
         requiresNetwork = false,
@@ -60,12 +60,12 @@ class MlKitTranslationProvider @Inject constructor() : TranslationProvider {
         return TranslationResponse(translated, sourceTag, id)
     }
 
-    suspend fun detectLanguage(text: String): String {
+    override suspend fun detectLanguage(text: String): String {
         if (text.isBlank()) return "und"
         return languageIdentifier.identifyLanguage(text.take(LANGUAGE_SAMPLE_CHARS)).awaitTask()
     }
 
-    suspend fun downloadModel(sourceLanguage: String, targetLanguage: String) {
+    override suspend fun downloadModel(sourceLanguage: String, targetLanguage: String) {
         val source = toMlKitLanguage(sourceLanguage)
             ?: throw IllegalArgumentException("Unsupported source language: $sourceLanguage")
         val target = toMlKitLanguage(targetLanguage)
@@ -75,13 +75,13 @@ class MlKitTranslationProvider @Inject constructor() : TranslationProvider {
             .awaitTask()
     }
 
-    suspend fun downloadedModels(): List<String> =
+    override suspend fun downloadedModels(): List<String> =
         modelManager.getDownloadedModels(TranslateRemoteModel::class.java)
             .awaitTask()
             .map { it.language }
             .sorted()
 
-    suspend fun deleteModel(languageTag: String) {
+    override suspend fun deleteModel(languageTag: String) {
         val model = TranslateRemoteModel.Builder(languageTag).build()
         modelManager.deleteDownloadedModel(model).awaitTask()
     }
