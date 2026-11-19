@@ -65,23 +65,23 @@ fun TranslationSettingsPage(
     var targetLanguage by rememberSaveable {
         mutableStateOf(viewModel.selectedTargetLanguage())
     }
-    var endpoint by rememberSaveable { mutableStateOf(initialConfig?.endpoint.orEmpty()) }
+    var endpoint by rememberSaveable(selectedProviderId) { mutableStateOf(initialConfig?.endpoint.orEmpty()) }
     // Do not place API credentials in Android saved-instance-state bundles.
-    var apiKey by remember { mutableStateOf(initialConfig?.apiKey.orEmpty()) }
-    var model by rememberSaveable { mutableStateOf(initialConfig?.model.orEmpty()) }
-    var headersText by rememberSaveable {
+    var apiKey by remember(selectedProviderId) { mutableStateOf(initialConfig?.apiKey.orEmpty()) }
+    var model by rememberSaveable(selectedProviderId) { mutableStateOf(initialConfig?.model.orEmpty()) }
+    var headersText by rememberSaveable(selectedProviderId) {
         mutableStateOf(
             initialConfig?.headers?.let { headers ->
                 JSONObject().apply { headers.forEach { (key, value) -> put(key, value) } }.toString(2)
             } ?: "{}"
         )
     }
-    var requestTemplate by remember {
+    var requestTemplate by remember(selectedProviderId) {
         mutableStateOf(
             initialConfig?.requestTemplate ?: TranslationApiConfiguration.DEFAULT_REQUEST_TEMPLATE
         )
     }
-    var responsePath by rememberSaveable {
+    var responsePath by rememberSaveable(selectedProviderId) {
         mutableStateOf(initialConfig?.responsePath ?: "choices.0.message.content")
     }
     var sourceLanguage by rememberSaveable { mutableStateOf(viewModel.selectedSourceLanguage()) }
