@@ -225,6 +225,14 @@ private fun Preset(
         }
         RYSelectionChip(
             modifier = Modifier,
+            content = "自动翻译全部订阅源",
+            selected = viewModel.groupOptionUiState.collectAsStateValue().isAutoTranslateEnabled,
+        ) {
+            val enabled = !viewModel.groupOptionUiState.value.isAutoTranslateEnabled
+            viewModel.allAutoTranslation(enabled)
+        }
+        RYSelectionChip(
+            modifier = Modifier,
             content = stringResource(R.string.clear_articles),
             selected = false,
         ) {
