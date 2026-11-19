@@ -7,7 +7,6 @@ import android.util.Base64
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
 import java.security.KeyStore
-import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -82,7 +81,7 @@ class TranslationApiConfigStore @Inject constructor(
     }
 
     fun targetLanguage(): String =
-        preferences.getString(KEY_TARGET_LANGUAGE, Locale.getDefault().toLanguageTag())
+        preferences.getString(KEY_TARGET_LANGUAGE, "zh-CN")
             ?.takeIf { it.isNotBlank() }
             ?: "zh-CN"
 

@@ -28,6 +28,9 @@ class HttpJsonTranslationProvider @Inject constructor(
 ) : TranslationProvider {
     override val id: String = TranslationEngine.HTTP_JSON.id
 
+    // Reuse a dedicated client with platform-default certificate validation.
+    private val baseClient = OkHttpClient.Builder().build()
+
     override suspend fun translate(request: TranslationRequest): TranslationResponse {
         require(request.text.isNotBlank()) { "There is no text to translate." }
         val config = configStore.loadConfiguration()
@@ -64,7 +67,7 @@ class HttpJsonTranslationProvider @Inject constructor(
             builder.header(name, replaceHeaderPlaceholders(value, config.apiKey))
         }
 
-        val client = OkHttpClient.Builder()
+        val client = baseClient.newBuilder()
             .connectTimeout(config.timeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(config.timeoutSeconds, TimeUnit.SECONDS)
             .callTimeout(config.timeoutSeconds, TimeUnit.SECONDS)

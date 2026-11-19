@@ -3,12 +3,13 @@ package me.ash.reader.infrastructure.translation
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
-import org.jsoup.Jsoup
+import kotlinx.coroutines.CancellationException
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.TextNode
+import org.jsoup.Jsoup
 
 /**
- * Entry point used by the reader. Keeps provider selection, HTML handling, and caching
+ * Entry point used by the reader. Provider selection, HTML handling, and caching stay
  * outside the UI so additional translation providers do not require reader changes.
  */
 @Singleton
@@ -32,32 +33,27 @@ class TranslationService @Inject constructor(
         sourceLanguage: String? = null,
         engine: TranslationEngine = selectedEngine(),
     ): TranslationResponse {
-        if (text.isBlank()) {
-            return TranslationResponse(text, sourceLanguage, engine.id)
-        }
+        if (text.isBlank()) return TranslationResponse(text, sourceLanguage, engine.id)
 
         val provider = providerFor(engine)
-        val cacheKey = listOf(
+        val key = createCacheKey(
             provider.id,
             cacheRevision(engine),
-            sourceLanguage.orEmpty(),
+            sourceLanguage,
             targetLanguage,
             text,
-        ).joinToString("|")
+        )
+        cache.get(key)?.let { return TranslationResponse(it, sourceLanguage, provider.id) }
 
-        cache.get(cacheKey)?.let {
-            return TranslationResponse(it, sourceLanguage, provider.id)
-        }
-
-        val result = provider.translate(
+        val response = provider.translate(
             TranslationRequest(
                 text = text,
                 sourceLanguage = sourceLanguage,
                 targetLanguage = targetLanguage,
             )
         )
-        cache.put(cacheKey, result.translatedText)
-        return result
+        cache.put(key, response.translatedText)
+        return response
     }
 
     suspend fun translateHtml(
@@ -76,30 +72,28 @@ class TranslationService @Inject constructor(
         if (textNodes.isEmpty()) return html
 
         val sourceLanguage = if (engine == TranslationEngine.ON_DEVICE) {
-            onDeviceProvider.detectLanguage(body.text())
-                .takeIf { it != "und" }
+            onDeviceProvider.detectLanguage(body.text()).takeIf { it != "und" }
         } else {
             null
         }
 
-        val total = textNodes.size
-        textNodes.forEachIndexed { index, node ->
-            val originalText = node.wholeText
-            val chunks = splitLongText(originalText)
-            val translated = buildString {
-                chunks.forEach { chunk ->
-                    append(
-                        translateText(
-                            text = chunk,
-                            sourceLanguage = sourceLanguage,
-                            targetLanguage = targetLanguage,
-                            engine = engine,
-                        ).translatedText
-                    )
-                }
-            }
-            node.text(translated)
-            onProgress((index + 1).toFloat() / total)
+        // Keep the association between DOM nodes and their chunks to avoid moving text
+        // across markup boundaries when a paragraph exceeds the engine's input limit.
+        val nodeChunks = textNodes.map { node -> node to splitLongText(node.wholeText) }
+        val flattenedChunks = nodeChunks.flatMap { it.second }
+        val translatedChunks = translateSegments(
+            segments = flattenedChunks,
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage,
+            engine = engine,
+        )
+
+        var translatedIndex = 0
+        nodeChunks.forEachIndexed { nodeIndex, (node, chunks) ->
+            node.text(buildString {
+                repeat(chunks.size) { append(translatedChunks[translatedIndex++]) }
+            })
+            onProgress((nodeIndex + 1).toFloat() / nodeChunks.size)
         }
 
         return body.html()
@@ -119,8 +113,155 @@ class TranslationService @Inject constructor(
     fun saveApiConfiguration(configuration: TranslationApiConfiguration) =
         configStore.saveConfiguration(configuration)
 
-    fun loadApiConfiguration(): TranslationApiConfiguration? =
-        configStore.loadConfiguration()
+    fun loadApiConfiguration(): TranslationApiConfiguration? = configStore.loadConfiguration()
+
+    private suspend fun translateSegments(
+        segments: List<String>,
+        sourceLanguage: String?,
+        targetLanguage: String,
+        engine: TranslationEngine,
+    ): List<String> {
+        if (segments.isEmpty()) return emptyList()
+
+        val provider = providerFor(engine)
+        val revision = cacheRevision(engine)
+        val results = MutableList<String?>(segments.size) { null }
+        val missingIndices = mutableListOf<Int>()
+
+        segments.forEachIndexed { index, segment ->
+            val key = createCacheKey(
+                provider.id, revision, sourceLanguage, targetLanguage, segment
+            )
+            val cached = cache.get(key)
+            if (cached != null) results[index] = cached else missingIndices += index
+        }
+
+        suspend fun translateOne(segmentIndex: Int) {
+            val segment = segments[segmentIndex]
+            val response = provider.translate(
+                TranslationRequest(
+                    text = segment,
+                    sourceLanguage = sourceLanguage,
+                    targetLanguage = targetLanguage,
+                )
+            )
+            results[segmentIndex] = response.translatedText
+            cache.put(
+                createCacheKey(
+                    provider.id, revision, sourceLanguage, targetLanguage, segment
+                ),
+                response.translatedText,
+            )
+        }
+
+        // ML Kit is local: do not send artificial sentinels through a translation model.
+        if (engine == TranslationEngine.ON_DEVICE) {
+            for (index in missingIndices) translateOne(index)
+        } else {
+            // Bounded batches reduce remote request count without creating oversized prompts.
+            for (batch in buildBatches(missingIndices, segments)) {
+                val markers = (0..batch.size).map(::batchMarker)
+                val payload = buildString {
+                    batch.forEachIndexed { index, segmentIndex ->
+                        append(markers[index])
+                        append(segments[segmentIndex])
+                    }
+                    append(markers.last())
+                }
+
+                val batchResult = try {
+                    provider.translate(
+                        TranslationRequest(
+                            text = payload,
+                            sourceLanguage = sourceLanguage,
+                            targetLanguage = targetLanguage,
+                        )
+                    ).translatedText
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+
+                val pieces = batchResult?.let { extractMarkedSegments(it, markers) }
+                if (pieces != null) {
+                    batch.forEachIndexed { index, segmentIndex ->
+                        val value = pieces[index]
+                        results[segmentIndex] = value
+                        cache.put(
+                            createCacheKey(
+                                provider.id, revision, sourceLanguage, targetLanguage,
+                                segments[segmentIndex],
+                            ),
+                            value,
+                        )
+                    }
+                } else {
+                    // If a service changes/removes sentinels, retry each original text node.
+                    for (segmentIndex in batch) translateOne(segmentIndex)
+                }
+            }
+        }
+
+        return results.mapIndexed { index, value ->
+            value ?: throw IllegalStateException("Translation result $index is missing.")
+        }
+    }
+
+    private fun extractMarkedSegments(
+        translated: String,
+        markers: List<String>,
+    ): List<String>? {
+        if (markers.size < 2 || !translated.startsWith(markers.first())) return null
+
+        val result = mutableListOf<String>()
+        var cursor = markers.first().length
+        for (markerIndex in 1 until markers.size) {
+            val markerPosition = translated.indexOf(markers[markerIndex], cursor)
+            if (markerPosition < 0) return null
+            result += translated.substring(cursor, markerPosition)
+            cursor = markerPosition + markers[markerIndex].length
+        }
+
+        if (translated.substring(cursor).isNotBlank()) return null
+        return result
+    }
+
+    private fun buildBatches(indices: List<Int>, segments: List<String>): List<List<Int>> {
+        val result = mutableListOf<List<Int>>()
+        var batch = mutableListOf<Int>()
+        var batchChars = 0
+
+        for (index in indices) {
+            val length = segments[index].length
+            if (batch.isNotEmpty() &&
+                (batch.size >= MAX_BATCH_SEGMENTS || batchChars + length > MAX_BATCH_CHARS)
+            ) {
+                result += batch
+                batch = mutableListOf()
+                batchChars = 0
+            }
+            batch += index
+            batchChars += length
+        }
+        if (batch.isNotEmpty()) result += batch
+        return result
+    }
+
+    private fun batchMarker(index: Int): String =
+        "<|RY_TRANSLATION_SEGMENT_${index.toString().padStart(3, '0')}|>"
+
+    private fun createCacheKey(
+        providerId: String,
+        revision: String,
+        sourceLanguage: String?,
+        targetLanguage: String,
+        text: String,
+    ): String {
+        // Length-prefix each field so separator characters in article content cannot collide.
+        val fields = listOf(providerId, revision, sourceLanguage.orEmpty(), targetLanguage, text)
+        return fields.joinToString("") { "${it.length}:$it" }
+    }
 
     private fun cacheRevision(engine: TranslationEngine): String {
         if (engine != TranslationEngine.HTTP_JSON) return PROVIDER_REVISION
@@ -149,8 +290,10 @@ class TranslationService @Inject constructor(
             when (child) {
                 is TextNode -> {
                     val parent = child.parent()
-                    if (child.wholeText.isNotBlank() && parent != null && !isInsideIgnoredElement(parent)) {
-                        result.add(child)
+                    if (child.wholeText.isNotBlank() && parent != null &&
+                        !isInsideIgnoredElement(parent)
+                    ) {
+                        result += child
                     }
                 }
                 is Element -> if (!isIgnoredElement(child)) {
@@ -169,18 +312,12 @@ class TranslationService @Inject constructor(
         return false
     }
 
-    private fun isIgnoredElement(element: Element): Boolean {
-        val tag = element.normalName()
-        return tag in IGNORED_TAGS ||
+    private fun isIgnoredElement(element: Element): Boolean =
+        element.normalName() in IGNORED_TAGS ||
             element.hasAttr("contenteditable") ||
             element.hasClass("notranslate") ||
             element.attr("translate").equals("no", ignoreCase = true)
-    }
 
-    /**
-     * Keep chunk boundaries at whitespace where possible. Chunks are concatenated
-     * without injecting extra punctuation or markup.
-     */
     private fun splitLongText(text: String, maxChars: Int = MAX_CHUNK_CHARS): List<String> {
         if (text.length <= maxChars) return listOf(text)
         val chunks = mutableListOf<String>()
@@ -200,6 +337,8 @@ class TranslationService @Inject constructor(
     private companion object {
         const val PROVIDER_REVISION = "1"
         const val MAX_CHUNK_CHARS = 3500
+        const val MAX_BATCH_SEGMENTS = 8
+        const val MAX_BATCH_CHARS = 6000
         val IGNORED_TAGS = setOf(
             "script", "style", "noscript", "pre", "code", "kbd", "samp",
             "svg", "math", "textarea", "input", "select", "option",

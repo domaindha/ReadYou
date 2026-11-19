@@ -61,13 +61,14 @@ fun TranslationSettingsPage(
         mutableStateOf(viewModel.selectedTargetLanguage())
     }
     var endpoint by rememberSaveable { mutableStateOf(initialConfig?.endpoint.orEmpty()) }
-    var apiKey by rememberSaveable { mutableStateOf(initialConfig?.apiKey.orEmpty()) }
+    // Do not place API credentials in Android saved-instance-state bundles.
+    var apiKey by remember { mutableStateOf(initialConfig?.apiKey.orEmpty()) }
     var model by rememberSaveable { mutableStateOf(initialConfig?.model.orEmpty()) }
     var headersText by rememberSaveable {
         mutableStateOf(
             initialConfig?.headers?.let { headers ->
                 JSONObject().apply { headers.forEach { (key, value) -> put(key, value) } }.toString(2)
-            } ?: """{"Authorization":"Bearer {{apiKey}}"}"""
+            } ?: "{}"
         )
     }
     var requestTemplate by remember {

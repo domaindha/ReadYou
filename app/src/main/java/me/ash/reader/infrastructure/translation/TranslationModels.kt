@@ -47,7 +47,7 @@ data class TranslationApiConfiguration(
               "messages": [
                 {
                   "role": "system",
-                  "content": "Translate the user text from {{sourceLanguage}} to {{targetLanguage}}. Return only the translation."
+                  "content": "Translate the user text from {{sourceLanguage}} to {{targetLanguage}}. Return only the translation. Preserve every tag matching <|RY_TRANSLATION_SEGMENT_NNN|> exactly, including its numeric suffix and original order. These tags are delimiters, not text to translate. Never remove, duplicate, modify, or move them."
                 },
                 {
                   "role": "user",
