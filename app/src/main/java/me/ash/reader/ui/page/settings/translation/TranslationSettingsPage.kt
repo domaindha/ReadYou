@@ -43,6 +43,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import me.ash.reader.infrastructure.translation.TranslationApiConfiguration
 import me.ash.reader.infrastructure.translation.TranslationEngine
 import me.ash.reader.infrastructure.translation.TranslationLanguages
+import me.ash.reader.infrastructure.translation.TranslationLanguage
 import me.ash.reader.ui.component.base.DisplayText
 import me.ash.reader.ui.component.base.FeedbackIconButton
 import me.ash.reader.ui.component.base.RYScaffold
@@ -59,6 +60,12 @@ fun TranslationSettingsPage(
     val selectedProviderId by viewModel.selectedProviderId.collectAsState()
     val providers = viewModel.availableProviders
     val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
+    val supportedLanguageTags = selectedProvider?.capabilities?.supportedLanguageTags
+    val availableLanguages = remember(selectedProviderId, supportedLanguageTags) {
+        supportedLanguageTags?.let { supported ->
+            TranslationLanguages.supported.filter { it.tag in supported }
+        } ?: TranslationLanguages.supported
+    }
     val initialConfig = remember(selectedProviderId) { viewModel.loadApiConfiguration(selectedProviderId) }
     val downloadedModels by viewModel.downloadedModels.collectAsState()
     val scope = rememberCoroutineScope()
@@ -89,6 +96,9 @@ fun TranslationSettingsPage(
         mutableStateOf(initialConfig?.responsePath ?: "choices.0.message.content")
     }
     var sourceLanguage by rememberSaveable { mutableStateOf(viewModel.selectedSourceLanguage()) }
+    val targetLanguageSupported = supportedLanguageTags?.contains(targetLanguage) ?: true
+    val sourceLanguageSupported = sourceLanguage == "auto" ||
+        supportedLanguageTags?.contains(sourceLanguage) != false
     var status by rememberSaveable { mutableStateOf("") }
     var busy by rememberSaveable { mutableStateOf(false) }
 
@@ -137,9 +147,18 @@ fun TranslationSettingsPage(
                     label = "翻译成",
                     selectedTag = targetLanguage,
                     includeAuto = false,
+                    languages = availableLanguages,
                     onSelected = { targetLanguage = it },
                 )
+                if (!targetLanguageSupported) {
+                    Text(
+                        "当前引擎不支持所选目标语言，请从可用语言中重新选择。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 TextButton(
+                    enabled = targetLanguageSupported,
                     onClick = {
                         runCatching { viewModel.saveTargetLanguage(targetLanguage) }
                             .onSuccess { status = "目标语言已保存" }
@@ -324,6 +343,7 @@ fun TranslationSettingsPage(
                     label = "原文语言",
                     selectedTag = sourceLanguage,
                     includeAuto = true,
+                    languages = availableLanguages,
                     onSelected = {
                         sourceLanguage = it
                         viewModel.saveSourceLanguage(it)
@@ -334,6 +354,13 @@ fun TranslationSettingsPage(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (!sourceLanguageSupported) {
+                    Text(
+                        "当前引擎不支持所选源语言，请改为自动检测或选择可用语言。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
 
                 if (selectedProvider?.capabilities?.supportsModelManagement == true) {
                 Text("本地语言模型", style = MaterialTheme.typography.titleMedium)
@@ -411,6 +438,7 @@ private fun LanguagePicker(
     label: String,
     selectedTag: String,
     includeAuto: Boolean,
+    languages: List<TranslationLanguage> = TranslationLanguages.supported,
     onSelected: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -424,7 +452,7 @@ private fun LanguagePicker(
             if (includeAuto) {
                 DropdownMenuItem(text = { Text("自动检测") }, onClick = { onSelected("auto"); expanded = false })
             }
-            TranslationLanguages.supported.forEach { language ->
+            languages.forEach { language ->
                 DropdownMenuItem(
                     text = { Text(language.label + " (" + language.tag + ")") },
                     onClick = { onSelected(language.tag); expanded = false },

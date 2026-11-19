@@ -7,6 +7,8 @@ data class TranslationProviderCapabilities(
     val supportsLanguageDetection: Boolean = false,
     val supportsModelManagement: Boolean = false,
     val supportsCustomConfiguration: Boolean = false,
+    /** Null means the provider has not declared a language restriction. */
+    val supportedLanguageTags: Set<String>? = null,
 )
 
 /** Provider contract shared by offline and remote translation engines. */

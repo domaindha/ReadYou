@@ -29,6 +29,11 @@ class MlKitTranslationProvider @Inject constructor() : TranslationProvider, Tran
         supportsBatching = false,
         supportsLanguageDetection = true,
         supportsModelManagement = true,
+        // Match the language conversion used at runtime to avoid exposing unsupported choices.
+        supportedLanguageTags = TranslationLanguages.supported
+            .filter { language -> toMlKitLanguage(language.tag) != null }
+            .map { it.tag }
+            .toSet(),
     )
 
     private val modelManager = RemoteModelManager.getInstance()
