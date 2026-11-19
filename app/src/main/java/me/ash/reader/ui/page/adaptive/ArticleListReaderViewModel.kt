@@ -462,11 +462,11 @@ constructor(
 
         translationJob = viewModelScope.launch {
             try {
-                val engine = translationService.selectedEngine()
+                val providerId = translationService.selectedProviderId()
                 val translatedContent = translationService.translateHtml(
                     html = sourceContent,
                     targetLanguage = targetLanguage,
-                    engine = engine,
+                    providerId = providerId,
                     sourceLanguage = sourceLanguage,
                 )
                 val translatedTitle = translationService.translateText(
