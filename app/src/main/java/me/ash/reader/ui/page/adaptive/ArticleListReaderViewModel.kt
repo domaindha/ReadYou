@@ -472,7 +472,7 @@ constructor(
                 val translatedTitle = translationService.translateText(
                     text = sourceTitle,
                     targetLanguage = targetLanguage,
-                    engine = engine,
+                    providerId = providerId,
                     sourceLanguage = sourceLanguage,
                 ).translatedText
 
