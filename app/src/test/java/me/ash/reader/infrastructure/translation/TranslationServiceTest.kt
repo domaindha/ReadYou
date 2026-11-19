@@ -31,6 +31,82 @@ class TranslationServiceTest {
         assertEquals("beta", provider.requests[2])
     }
 
+
+    @Test
+    fun cacheKeysAreIsolatedByProviderAndProviderConfigurationRevision() = runBlocking {
+        val providerA = CountingProvider("provider_a")
+        val providerB = CountingProvider("provider_b")
+        val registry = TranslationProviderRegistry(setOf(providerA, providerB))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        whenever(cache.get(Mockito.anyString())).thenReturn(null)
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        val initialA = testConfiguration(endpoint = "https://a.example/translate", apiKey = "key-a")
+        val changedA = initialA.copy(model = "model-v2")
+        val configB = testConfiguration(endpoint = "https://b.example/translate", apiKey = "key-b")
+        whenever(configStore.loadConfiguration("provider_a")).thenReturn(initialA, changedA)
+        whenever(configStore.loadConfiguration("provider_b")).thenReturn(configB)
+        val service = TranslationService(registry, cache, configStore)
+
+        service.translateText("same article text", "zh-CN", "en", providerId = "provider_a")
+        service.translateText("same article text", "zh-CN", "en", providerId = "provider_b")
+        service.translateText("same article text", "zh-CN", "en", providerId = "provider_a")
+
+        val keys = org.mockito.ArgumentCaptor.forClass(String::class.java)
+        Mockito.verify(cache, Mockito.times(3)).get(keys.capture())
+        val captured = keys.allValues
+        assertEquals(3, captured.distinct().size)
+        assertEquals(3, providerA.requestCount + providerB.requestCount)
+    }
+
+    @Test
+    fun cacheKeyIncludesSourceAndTargetLanguagesButIgnoresTimeoutOnlyChanges() = runBlocking {
+        val provider = CountingProvider("provider_languages")
+        val registry = TranslationProviderRegistry(setOf(provider))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        whenever(cache.get(Mockito.anyString())).thenReturn(null)
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        val base = testConfiguration(endpoint = "https://api.example/translate")
+        whenever(configStore.loadConfiguration(provider.id)).thenReturn(
+            base,
+            base.copy(timeoutSeconds = 90L),
+            base,
+            base,
+        )
+        val service = TranslationService(registry, cache, configStore)
+
+        service.translateText("hello", "zh-CN", "en", providerId = provider.id)
+        service.translateText("hello", "zh-CN", "en", providerId = provider.id)
+        service.translateText("hello", "ja", "en", providerId = provider.id)
+        service.translateText("hello", "zh-CN", "ja", providerId = provider.id)
+
+        val keys = org.mockito.ArgumentCaptor.forClass(String::class.java)
+        Mockito.verify(cache, Mockito.times(4)).get(keys.capture())
+        assertEquals(3, keys.allValues.distinct().size)
+    }
+
+    private fun testConfiguration(
+        endpoint: String,
+        apiKey: String = "",
+    ) = TranslationApiConfiguration(
+        endpoint = endpoint,
+        apiKey = apiKey,
+        requestTemplate = """{"text":"{{text}}"}""",
+        responsePath = "text",
+    )
+
+    private class CountingProvider(override val id: String) : TranslationProvider {
+        override val capabilities = TranslationProviderCapabilities(
+            requiresNetwork = true,
+            supportsBatching = false,
+        )
+        var requestCount = 0
+
+        override suspend fun translate(request: TranslationRequest): TranslationResponse {
+            requestCount++
+            return TranslationResponse("translated:${request.text}", request.sourceLanguage, id)
+        }
+    }
+
     private class DuplicateMarkerProvider : TranslationProvider {
         override val id = "test_batch"
         override val displayName = "Test Batch"
