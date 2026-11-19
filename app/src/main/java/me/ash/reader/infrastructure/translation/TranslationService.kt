@@ -245,6 +245,10 @@ class TranslationService @Inject constructor(
     ): List<String>? {
         if (markers.size < 2 || !translated.startsWith(markers.first())) return null
 
+        // Reject duplicated, missing, or reordered sentinels before splitting translated text.
+        val actualMarkers = BATCH_MARKER_PATTERN.findAll(translated).map { it.value }.toList()
+        if (actualMarkers != markers) return null
+
         val result = mutableListOf<String>()
         var cursor = markers.first().length
         for (markerIndex in 1 until markers.size) {
@@ -376,6 +380,7 @@ class TranslationService @Inject constructor(
         const val MAX_CHUNK_CHARS = 3500
         const val MAX_BATCH_SEGMENTS = 8
         const val MAX_BATCH_CHARS = 6000
+        val BATCH_MARKER_PATTERN = Regex("<\\|RY_TRANSLATION_SEGMENT_[^>]*\\|>")
         val IGNORED_TAGS = setOf(
             "script", "style", "noscript", "pre", "code", "kbd", "samp",
             "svg", "math", "textarea", "input", "select", "option",
