@@ -18,6 +18,8 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -39,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import me.ash.reader.infrastructure.translation.TranslationApiConfiguration
 import me.ash.reader.infrastructure.translation.TranslationEngine
+import me.ash.reader.infrastructure.translation.TranslationLanguages
 import me.ash.reader.ui.component.base.DisplayText
 import me.ash.reader.ui.component.base.FeedbackIconButton
 import me.ash.reader.ui.component.base.RYScaffold
@@ -79,7 +82,7 @@ fun TranslationSettingsPage(
     var responsePath by rememberSaveable {
         mutableStateOf(initialConfig?.responsePath ?: "choices.0.message.content")
     }
-    var sourceLanguage by rememberSaveable { mutableStateOf("en") }
+    var sourceLanguage by rememberSaveable { mutableStateOf(viewModel.selectedSourceLanguage()) }
     var status by rememberSaveable { mutableStateOf("") }
     var busy by rememberSaveable { mutableStateOf(false) }
 
@@ -124,12 +127,11 @@ fun TranslationSettingsPage(
                 DisplayText(text = "文章翻译", desc = "离线翻译与自定义 HTTP/JSON 接口")
 
                 Text("目标语言", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(
-                    value = targetLanguage,
-                    onValueChange = { targetLanguage = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("语言代码，例如 zh-CN、ja、en") },
+                LanguagePicker(
+                    label = "翻译成",
+                    selectedTag = targetLanguage,
+                    includeAuto = false,
+                    onSelected = { targetLanguage = it },
                 )
                 TextButton(
                     onClick = {
@@ -267,12 +269,20 @@ fun TranslationSettingsPage(
                 }
 
                 Text("本地语言模型", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(
-                    value = sourceLanguage,
-                    onValueChange = { sourceLanguage = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("源语言代码，例如 en、ja") },
+                Text("源语言", style = MaterialTheme.typography.titleMedium)
+                LanguagePicker(
+                    label = "原文语言",
+                    selectedTag = sourceLanguage,
+                    includeAuto = true,
+                    onSelected = {
+                        sourceLanguage = it
+                        viewModel.saveSourceLanguage(it)
+                    },
+                )
+                Text(
+                    "自动检测适合大多数文章；也可以手动指定原文语言。目标语言会用于文章正文和标题。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
                     enabled = !busy,
@@ -281,6 +291,7 @@ fun TranslationSettingsPage(
                             busy = true
                             status = "正在下载语言模型…"
                             try {
+                                require(sourceLanguage != "auto") { "下载离线模型前，请先选择具体的源语言。" }
                                 viewModel.downloadModel(sourceLanguage, targetLanguage)
                                 status = "语言模型下载完成"
                             } catch (error: Throwable) {
@@ -338,4 +349,33 @@ fun TranslationSettingsPage(
             }
         },
     )
+}
+
+
+@Composable
+private fun LanguagePicker(
+    label: String,
+    selectedTag: String,
+    includeAuto: Boolean,
+    onSelected: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = if (selectedTag == "auto") "自动检测" else
+        TranslationLanguages.supported.firstOrNull { it.tag == selectedTag }?.label ?: selectedTag
+    Column {
+        TextButton(onClick = { expanded = true }) {
+            Text("$label：$selectedLabel  ▾")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (includeAuto) {
+                DropdownMenuItem(text = { Text("自动检测") }, onClick = { onSelected("auto"); expanded = false })
+            }
+            TranslationLanguages.supported.forEach { language ->
+                DropdownMenuItem(
+                    text = { Text(language.label + " (" + language.tag + ")") },
+                    onClick = { onSelected(language.tag); expanded = false },
+                )
+            }
+        }
+    }
 }
