@@ -23,6 +23,10 @@ class TranslationService @Inject constructor(
 
     fun targetLanguage(): String = configStore.targetLanguage()
 
+    fun sourceLanguage(): String = configStore.sourceLanguage()
+
+    fun setSourceLanguage(languageTag: String) = configStore.setSourceLanguage(languageTag)
+
     fun setTargetLanguage(languageTag: String) = configStore.setTargetLanguage(languageTag)
 
     fun selectEngine(engine: TranslationEngine) = configStore.setSelectedEngine(engine)
@@ -60,6 +64,7 @@ class TranslationService @Inject constructor(
         html: String,
         targetLanguage: String,
         engine: TranslationEngine = selectedEngine(),
+        sourceLanguage: String? = sourceLanguage().takeUnless { it == "auto" },
         onProgress: (Float) -> Unit = {},
     ): String {
         if (html.isBlank()) return html
@@ -71,11 +76,9 @@ class TranslationService @Inject constructor(
         collectTranslatableTextNodes(body, textNodes)
         if (textNodes.isEmpty()) return html
 
-        val sourceLanguage = if (engine == TranslationEngine.ON_DEVICE) {
+        val resolvedSourceLanguage = sourceLanguage ?: if (engine == TranslationEngine.ON_DEVICE) {
             onDeviceProvider.detectLanguage(body.text()).takeIf { it != "und" }
-        } else {
-            null
-        }
+        } else null
 
         // Keep the association between DOM nodes and their chunks to avoid moving text
         // across markup boundaries when a paragraph exceeds the engine's input limit.
@@ -83,7 +86,7 @@ class TranslationService @Inject constructor(
         val flattenedChunks = nodeChunks.flatMap { it.second }
         val translatedChunks = translateSegments(
             segments = flattenedChunks,
-            sourceLanguage = sourceLanguage,
+            sourceLanguage = resolvedSourceLanguage,
             targetLanguage = targetLanguage,
             engine = engine,
         )
