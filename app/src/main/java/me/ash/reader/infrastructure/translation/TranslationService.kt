@@ -149,16 +149,16 @@ class TranslationService @Inject constructor(
             sourceLanguage = resolvedSourceLanguage,
             targetLanguage = targetLanguage,
             providerId = selectedProvider.id,
+            onProgress = onProgress,
         )
 
         var translatedIndex = 0
-        nodeTranslations.forEachIndexed { nodeIndex, translation ->
+        nodeTranslations.forEach { translation ->
             translation.node.text(buildString {
                 append(translation.leadingWhitespace)
                 repeat(translation.chunks.size) { append(translatedChunks[translatedIndex++]) }
                 append(translation.trailingWhitespace)
             })
-            onProgress((nodeIndex + 1).toFloat() / nodeTranslations.size)
         }
 
         return body.html()
@@ -197,6 +197,7 @@ class TranslationService @Inject constructor(
         sourceLanguage: String?,
         targetLanguage: String,
         providerId: String,
+        onProgress: (Float) -> Unit,
     ): List<String> {
         if (segments.isEmpty()) return emptyList()
 
@@ -204,13 +205,24 @@ class TranslationService @Inject constructor(
         val revision = cacheRevision(provider.id)
         val results = MutableList<String?>(segments.size) { null }
         val missingIndices = mutableListOf<Int>()
+        var completedSegments = 0
+
+        fun reportProgress() {
+            onProgress(completedSegments.toFloat() / segments.size)
+        }
 
         segments.forEachIndexed { index, segment ->
             val key = createCacheKey(
                 provider.id, revision, sourceLanguage, targetLanguage, segment
             )
             val cached = cache.get(key)
-            if (cached != null) results[index] = cached else missingIndices += index
+            if (cached != null) {
+                results[index] = cached
+                completedSegments++
+                reportProgress()
+            } else {
+                missingIndices += index
+            }
         }
 
         suspend fun translateOne(segmentIndex: Int) {
@@ -229,6 +241,8 @@ class TranslationService @Inject constructor(
                 ),
                 response.translatedText,
             )
+            completedSegments++
+            reportProgress()
         }
 
         // Providers that do not declare batch support receive one original segment per request.
@@ -272,6 +286,8 @@ class TranslationService @Inject constructor(
                             ),
                             value,
                         )
+                        completedSegments++
+                        reportProgress()
                     }
                 } else {
                     // If a service changes/removes sentinels, retry each original text node.

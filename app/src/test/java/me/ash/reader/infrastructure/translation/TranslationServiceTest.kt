@@ -141,6 +141,28 @@ class TranslationServiceTest {
     }
 
     @Test
+    fun htmlTranslationProgressAdvancesAsEachSegmentCompletes() = runBlocking {
+        val provider = CountingProvider("provider_progress")
+        val registry = TranslationProviderRegistry(setOf(provider))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        whenever(cache.get(Mockito.anyString())).thenReturn(null)
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        val service = TranslationService(registry, cache, configStore)
+        val progressValues = mutableListOf<Float>()
+
+        service.translateHtml(
+            html = "<p>first</p><p>second</p>",
+            targetLanguage = "zh-CN",
+            providerId = provider.id,
+            sourceLanguage = "en",
+            onProgress = { progressValues += it },
+        )
+
+        assertEquals(listOf(0.5f, 1f), progressValues)
+        assertEquals(2, provider.requestCount)
+    }
+
+    @Test
     fun successfulTranslationIsStoredAndReusedFromCache() = runBlocking {
         val provider = CountingProvider("provider_cached")
         val registry = TranslationProviderRegistry(setOf(provider))
