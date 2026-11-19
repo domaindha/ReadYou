@@ -47,7 +47,7 @@ class TranslationApiConfigStore @Inject constructor(
             model = preferences.getString(storageKey(KEY_MODEL, providerId), "").orEmpty(),
             headers = headers,
             requestTemplate = preferences.getString(
-                KEY_TEMPLATE,
+                storageKey(KEY_TEMPLATE, providerId),
                 TranslationApiConfiguration.DEFAULT_REQUEST_TEMPLATE,
             ).orEmpty(),
             responsePath = preferences.getString(storageKey(KEY_RESPONSE_PATH, providerId), "choices.0.message.content")
