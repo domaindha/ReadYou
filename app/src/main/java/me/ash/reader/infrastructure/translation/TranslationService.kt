@@ -1,5 +1,6 @@
 package me.ash.reader.infrastructure.translation
 
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 import org.jsoup.Jsoup
@@ -19,6 +20,10 @@ class TranslationService @Inject constructor(
 ) {
     fun selectedEngine(): TranslationEngine = configStore.selectedEngine()
 
+    fun targetLanguage(): String = configStore.targetLanguage()
+
+    fun setTargetLanguage(languageTag: String) = configStore.setTargetLanguage(languageTag)
+
     fun selectEngine(engine: TranslationEngine) = configStore.setSelectedEngine(engine)
 
     suspend fun translateText(
@@ -34,7 +39,7 @@ class TranslationService @Inject constructor(
         val provider = providerFor(engine)
         val cacheKey = listOf(
             provider.id,
-            PROVIDER_REVISION,
+            cacheRevision(engine),
             sourceLanguage.orEmpty(),
             targetLanguage,
             text,
@@ -116,6 +121,22 @@ class TranslationService @Inject constructor(
 
     fun loadApiConfiguration(): TranslationApiConfiguration? =
         configStore.loadConfiguration()
+
+    private fun cacheRevision(engine: TranslationEngine): String {
+        if (engine != TranslationEngine.HTTP_JSON) return PROVIDER_REVISION
+        val config = configStore.loadConfiguration() ?: return "http-json-unconfigured"
+        val material = listOf(
+            config.endpoint,
+            config.model,
+            config.apiKey,
+            config.headers.toSortedMap().toString(),
+            config.requestTemplate,
+            config.responsePath,
+        ).joinToString("\u0000")
+        return MessageDigest.getInstance("SHA-256")
+            .digest(material.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
 
     private fun providerFor(engine: TranslationEngine): TranslationProvider =
         when (engine) {

@@ -53,7 +53,14 @@ class HttpJsonTranslationProvider @Inject constructor(
         val builder = Request.Builder()
             .url(endpoint)
             .post(requestJson.toString().toRequestBody(JSON_MEDIA_TYPE))
-        config.headers.forEach { (name, value) ->
+        val headers = config.headers.toMutableMap()
+        if (
+            config.apiKey.isNotBlank() &&
+            headers.keys.none { it.equals("Authorization", ignoreCase = true) || it.equals("X-API-Key", ignoreCase = true) }
+        ) {
+            headers["Authorization"] = "Bearer {{apiKey}}"
+        }
+        headers.forEach { (name, value) ->
             builder.header(name, replaceHeaderPlaceholders(value, config.apiKey))
         }
 

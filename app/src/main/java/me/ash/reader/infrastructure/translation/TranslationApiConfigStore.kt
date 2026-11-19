@@ -7,6 +7,7 @@ import android.util.Base64
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
 import java.security.KeyStore
+import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -28,17 +29,18 @@ class TranslationApiConfigStore @Inject constructor(
         val endpoint = preferences.getString(KEY_ENDPOINT, null)?.trim().orEmpty()
         if (endpoint.isEmpty()) return null
 
-        val headersJson = preferences.getString(KEY_HEADERS, "{}").orEmpty()
+        val headersJson = preferences.getString(KEY_HEADERS_ENCRYPTED, null)
+            ?.let { encrypted -> runCatching { decrypt(encrypted) }.getOrDefault("{}") }
+            ?: "{}"
         val headers = runCatching {
             val json = JSONObject(headersJson)
             json.keys().asSequence().associateWith { json.getString(it) }
         }.getOrDefault(emptyMap())
 
         val encryptedKey = preferences.getString(KEY_API_KEY, null)
-        val apiKey = encryptedKey?.let(::decrypt)
-            ?: if (encryptedKey == null) "" else throw IllegalStateException(
-                "The saved translation API key cannot be decrypted. Please enter it again."
-            )
+        val apiKey = encryptedKey
+            ?.let { encrypted -> runCatching { decrypt(encrypted) }.getOrDefault("") }
+            .orEmpty()
 
         return TranslationApiConfiguration(
             endpoint = endpoint,
@@ -68,7 +70,7 @@ class TranslationApiConfigStore @Inject constructor(
             .putString(KEY_ENDPOINT, configuration.endpoint.trim())
             .putString(KEY_API_KEY, configuration.apiKey.takeIf { it.isNotEmpty() }?.let(::encrypt))
             .putString(KEY_MODEL, configuration.model)
-            .putString(KEY_HEADERS, headersJson.toString())
+            .putString(KEY_HEADERS_ENCRYPTED, encrypt(headersJson.toString()))
             .putString(KEY_TEMPLATE, configuration.requestTemplate)
             .putString(KEY_RESPONSE_PATH, configuration.responsePath)
             .putLong(KEY_TIMEOUT, configuration.timeoutSeconds)
@@ -77,6 +79,16 @@ class TranslationApiConfigStore @Inject constructor(
 
     fun clearConfiguration() {
         preferences.edit().clear().apply()
+    }
+
+    fun targetLanguage(): String =
+        preferences.getString(KEY_TARGET_LANGUAGE, Locale.getDefault().toLanguageTag())
+            ?.takeIf { it.isNotBlank() }
+            ?: "zh-CN"
+
+    fun setTargetLanguage(languageTag: String) {
+        require(languageTag.isNotBlank()) { "Target language is required." }
+        preferences.edit().putString(KEY_TARGET_LANGUAGE, languageTag.trim()).apply()
     }
 
     fun selectedEngine(): TranslationEngine =
@@ -129,10 +141,11 @@ class TranslationApiConfigStore @Inject constructor(
         const val KEY_ENDPOINT = "endpoint"
         const val KEY_API_KEY = "api_key_encrypted"
         const val KEY_MODEL = "model"
-        const val KEY_HEADERS = "headers"
+        const val KEY_HEADERS_ENCRYPTED = "headers_encrypted"
         const val KEY_TEMPLATE = "request_template"
         const val KEY_RESPONSE_PATH = "response_path"
         const val KEY_TIMEOUT = "timeout_seconds"
         const val KEY_ENGINE = "selected_engine"
+        const val KEY_TARGET_LANGUAGE = "target_language"
     }
 }

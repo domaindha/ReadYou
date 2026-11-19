@@ -30,7 +30,7 @@ class TranslationFileCache @Inject constructor(
         }.getOrNull()
     }
 
-    suspend fun put(key: String, value: String) = withContext(ioDispatcher) {
+    suspend fun put(key: String, value: String): Unit = withContext(ioDispatcher) {
         if (value.length > MAX_ENTRY_CHARS) return@withContext
         if (!directory.exists() && !directory.mkdirs()) return@withContext
 
@@ -44,6 +44,7 @@ class TranslationFileCache @Inject constructor(
             }
             pruneOldEntries()
         }
+        Unit
     }
 
     suspend fun clear() = withContext(ioDispatcher) {

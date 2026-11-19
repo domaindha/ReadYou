@@ -8,7 +8,6 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 import kotlin.collections.any
 import kotlinx.coroutines.CancellationException
@@ -442,10 +441,7 @@ constructor(
 
         val articleId = state.articleId
         val sourceTitle = state.title.orEmpty()
-        val targetLanguage = Locale.getDefault()
-            .takeIf { it.language.isNotBlank() }
-            ?.toLanguageTag()
-            ?: "zh-CN"
+        val targetLanguage = translationService.targetLanguage()
 
         _readerState.update {
             it.copy(isTranslating = true, translationError = null)
