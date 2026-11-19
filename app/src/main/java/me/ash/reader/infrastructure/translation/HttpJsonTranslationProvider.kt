@@ -194,6 +194,6 @@ class HttpJsonTranslationProvider @Inject constructor(
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        val PLACEHOLDER_PATTERN = Regex("""\\{\\{(text|sourceLanguage|targetLanguage|model)\\}\\}""")
+        val PLACEHOLDER_PATTERN = Regex("""\{\{(text|sourceLanguage|targetLanguage|model)\}\}""")
     }
 }
