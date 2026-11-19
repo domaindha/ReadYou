@@ -378,8 +378,14 @@ fun TranslationSettingsPage(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    "预下载前请先选择具体且受支持的源语言和目标语言。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Button(
-                    enabled = !busy,
+                    enabled = !busy && sourceLanguage != "auto" &&
+                        sourceLanguageSupported && targetLanguageSupported,
                     onClick = {
                         scope.launch {
                             busy = true
