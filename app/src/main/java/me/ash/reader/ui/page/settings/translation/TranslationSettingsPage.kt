@@ -55,8 +55,10 @@ fun TranslationSettingsPage(
     onBack: () -> Unit,
     viewModel: TranslationSettingsViewModel = hiltViewModel(),
 ) {
-    val initialConfig = remember { viewModel.loadApiConfiguration() }
-    val selectedEngine by viewModel.selectedEngine.collectAsState()
+    val selectedProviderId by viewModel.selectedProviderId.collectAsState()
+    val providers = viewModel.availableProviders
+    val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
+    val initialConfig = remember(selectedProviderId) { viewModel.loadApiConfiguration(selectedProviderId) }
     val downloadedModels by viewModel.downloadedModels.collectAsState()
     val scope = rememberCoroutineScope()
 
@@ -142,33 +144,28 @@ fun TranslationSettingsPage(
                 ) { Text("保存目标语言") }
 
                 Text("翻译引擎", style = MaterialTheme.typography.titleMedium)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(
-                        selected = selectedEngine == TranslationEngine.ON_DEVICE,
-                        onClick = { viewModel.selectEngine(TranslationEngine.ON_DEVICE) },
-                    )
-                    Column {
-                        Text("设备端离线翻译")
-                        Text(
-                            "使用 ML Kit。模型下载完成后可离线翻译。",
-                            style = MaterialTheme.typography.bodySmall,
+                providers.forEach { provider ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = selectedProviderId == provider.id,
+                            onClick = { viewModel.selectProvider(provider.id) },
                         )
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(
-                        selected = selectedEngine == TranslationEngine.HTTP_JSON,
-                        onClick = { viewModel.selectEngine(TranslationEngine.HTTP_JSON) },
-                    )
-                    Column {
-                        Text("自定义 HTTP/JSON API")
-                        Text(
-                            "自行配置请求 JSON、请求头和响应字段路径。",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                        Column {
+                            Text(provider.displayName)
+                            Text(
+                                buildString {
+                                    append(if (provider.capabilities.requiresNetwork) "需要网络" else "无需网络")
+                                    if (provider.capabilities.supportsBatching) append(" · 支持批量")
+                                    if (provider.capabilities.supportsLanguageDetection) append(" · 支持语言检测")
+                                    if (provider.capabilities.supportsModelManagement) append(" · 支持模型管理")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
 
+                if (selectedProvider?.capabilities?.supportsCustomConfiguration == true) {
                 Text("自定义 API", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "使用 API 时，文章文本会发送给你填写的服务。API Key 默认作为 Bearer Token 发送；配置密钥时只允许 HTTPS 地址，密钥和请求头使用 Android Keystore 加密保存。",
@@ -235,7 +232,7 @@ fun TranslationSettingsPage(
                         onClick = {
                             try {
                                 val config = buildConfiguration()
-                                viewModel.saveApiConfiguration(config)
+                                viewModel.saveApiConfiguration(config, selectedProviderId)
                                 viewModel.saveTargetLanguage(targetLanguage)
                                 status = "API 配置已保存"
                             } catch (error: Throwable) {
@@ -253,6 +250,7 @@ fun TranslationSettingsPage(
                                     val result = viewModel.testApi(
                                         buildConfiguration(),
                                         targetLanguage,
+                                        selectedProviderId,
                                     )
                                     status = "接口测试成功：$result"
                                 } catch (error: Throwable) {
@@ -268,6 +266,9 @@ fun TranslationSettingsPage(
                     }
                 }
 
+                }
+
+                if (selectedProvider?.capabilities?.supportsModelManagement == true) {
                 Text("本地语言模型", style = MaterialTheme.typography.titleMedium)
                 Text("源语言", style = MaterialTheme.typography.titleMedium)
                 LanguagePicker(
