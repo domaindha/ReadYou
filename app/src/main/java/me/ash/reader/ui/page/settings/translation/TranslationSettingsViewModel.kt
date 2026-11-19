@@ -23,6 +23,10 @@ class TranslationSettingsViewModel @Inject constructor(
 
     fun selectedTargetLanguage(): String = translationService.targetLanguage()
 
+    fun selectedSourceLanguage(): String = translationService.sourceLanguage()
+
+    fun saveSourceLanguage(languageTag: String) = translationService.setSourceLanguage(languageTag)
+
     fun loadApiConfiguration(): TranslationApiConfiguration? =
         translationService.loadApiConfiguration()
 
