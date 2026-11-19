@@ -224,7 +224,16 @@ fun TranslationSettingsPage(
                             Text(provider.displayName)
                             Text(
                                 buildString {
-                                    append(if (provider.capabilities.requiresNetwork) "需要网络" else "无需网络")
+                                    append(
+                                        when {
+                                            provider.capabilities.requiresNetwork -> "需要网络"
+                                            provider.capabilities.supportsModelManagement -> "设备端运行"
+                                            else -> "无需网络"
+                                        }
+                                    )
+                                    if (!provider.capabilities.requiresNetwork &&
+                                        provider.capabilities.supportsModelManagement
+                                    ) append(" · 首次下载模型需要网络")
                                     if (provider.capabilities.supportsBatching) append(" · 支持批量")
                                     if (provider.capabilities.supportsLanguageDetection) append(" · 支持语言检测")
                                     if (provider.capabilities.supportsModelManagement) append(" · 支持模型管理")
@@ -364,6 +373,11 @@ fun TranslationSettingsPage(
 
                 if (selectedProvider?.capabilities?.supportsModelManagement == true) {
                 Text("本地语言模型", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "首次使用语言模型需要联网下载；下载完成后，翻译在设备端离线运行。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Button(
                     enabled = !busy,
                     onClick = {
