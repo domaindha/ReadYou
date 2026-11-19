@@ -23,6 +23,12 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 @Singleton
 class MlKitTranslationProvider @Inject constructor() : TranslationProvider {
     override val id: String = TranslationEngine.ON_DEVICE.id
+    override val capabilities = TranslationProviderCapabilities(
+        requiresNetwork = false,
+        supportsBatching = false,
+        supportsLanguageDetection = true,
+        supportsModelManagement = true,
+    )
 
     private val modelManager = RemoteModelManager.getInstance()
     private val languageIdentifier = LanguageIdentification.getClient()
