@@ -42,7 +42,7 @@ class TranslationServiceTest {
         val service = TranslationService(registry, cache, configStore)
 
         val translated = service.translateHtml(
-            html = "<p>bonjour le monde</p>",
+            html = """<p>bonjour le monde</p><pre>日本語のコード例</pre><p class="notranslate">This hidden English text must not affect detection.</p>""",
             targetLanguage = "zh-CN",
             providerId = provider.id,
             sourceLanguage = null,

@@ -126,7 +126,7 @@ class TranslationService @Inject constructor(
                 ?: throw IllegalStateException(
                     "Provider '${selectedProvider.id}' declares language detection but does not implement it."
                 )
-            detector.detectLanguage(body.text()).takeIf { it != "und" }
+            detector.detectLanguage(textNodes.joinToString(" ") { it.wholeText.trim() }).takeIf { it != "und" }
         } else null
 
         // Preserve boundary whitespace outside the translation request. Providers may
