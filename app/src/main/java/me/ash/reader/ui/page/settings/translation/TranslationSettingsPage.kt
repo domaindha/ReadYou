@@ -340,6 +340,7 @@ fun TranslationSettingsPage(
                         }
                     }
                 }
+                }
 
                 if (status.isNotBlank()) {
                     Text(status, color = MaterialTheme.colorScheme.primary)
