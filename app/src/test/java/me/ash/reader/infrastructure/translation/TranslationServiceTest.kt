@@ -402,7 +402,7 @@ class TranslationServiceTest {
         }
 
         private companion object {
-            val MARKER = Regex("<\\\\|RY_TRANSLATION_SEGMENT_[^>]*\\\\|>")
+            val MARKER = Regex("""<\|RY_TRANSLATION_SEGMENT_[^>]*\|>""")
         }
     }
 
