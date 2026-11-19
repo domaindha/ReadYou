@@ -89,8 +89,11 @@ class TranslationService @Inject constructor(
 
         val selectedProvider = providerFor(providerId ?: engine?.id ?: configStore.selectedProviderId())
         val resolvedSourceLanguage = sourceLanguage ?: if (selectedProvider.capabilities.supportsLanguageDetection) {
-            (selectedProvider as? TranslationLanguageDetector)
-                ?.detectLanguage(body.text())?.takeIf { it != "und" }
+            val detector = selectedProvider as? TranslationLanguageDetector
+                ?: throw IllegalStateException(
+                    "Provider '${selectedProvider.id}' declares language detection but does not implement it."
+                )
+            detector.detectLanguage(body.text()).takeIf { it != "und" }
         } else null
 
         // Keep the association between DOM nodes and their chunks to avoid moving text
