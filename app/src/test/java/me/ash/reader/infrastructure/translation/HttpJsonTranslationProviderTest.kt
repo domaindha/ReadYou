@@ -90,6 +90,25 @@ class HttpJsonTranslationProviderTest {
     }
 
     @Test
+    fun embeddedUrlCredentialsAreRejectedForPlainHttpEndpoints() {
+        val provider = providerWith(
+            TranslationApiConfiguration(
+                endpoint = "http://user:password@127.0.0.1:1/translate",
+                requestTemplate = """{"text":"{{text}}"}""",
+                responsePath = "text",
+            )
+        )
+
+        val error = org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                provider.translate(TranslationRequest("hello", "en", "zh-CN"))
+            }
+        }
+
+        assertTrue(error.message.orEmpty().contains("HTTPS"))
+    }
+
+    @Test
     fun commonCredentialHeaderNamesAreRejectedForPlainHttpEndpoints() {
         listOf("X-Auth-Token", "Api-Key", "X-Client-Secret", "Proxy-Authorization").forEach { header ->
             val provider = providerWith(
