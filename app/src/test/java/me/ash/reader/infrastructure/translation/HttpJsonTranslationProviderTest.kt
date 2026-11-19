@@ -21,7 +21,6 @@ class HttpJsonTranslationProviderTest {
         LocalJsonServer(200, response).use { server ->
             val config = TranslationApiConfiguration(
                 endpoint = server.url,
-                apiKey = "test-secret",
                 model = "test-model",
                 headers = mapOf("X-Client" to "ReadYou"),
                 requestTemplate = """{"q":"{{text}}","source":"{{sourceLanguage}}","target":"{{targetLanguage}}","model":"{{model}}"}""",
@@ -46,7 +45,6 @@ class HttpJsonTranslationProviderTest {
             assertEquals("en", requestJson.getString("source"))
             assertEquals("zh-CN", requestJson.getString("target"))
             assertEquals("test-model", requestJson.getString("model"))
-            assertTrue(server.requestHeaders.contains("Authorization: Bearer test-secret"))
             assertTrue(server.requestHeaders.contains("X-Client: ReadYou"))
         }
     }
