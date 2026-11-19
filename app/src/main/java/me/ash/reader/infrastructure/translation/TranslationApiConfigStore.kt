@@ -24,11 +24,11 @@ class TranslationApiConfigStore @Inject constructor(
     private val preferences =
         context.getSharedPreferences("translation_api_settings", Context.MODE_PRIVATE)
 
-    fun loadConfiguration(): TranslationApiConfiguration? {
-        val endpoint = preferences.getString(KEY_ENDPOINT, null)?.trim().orEmpty()
+    fun loadConfiguration(providerId: String = TranslationEngine.HTTP_JSON.id): TranslationApiConfiguration? {
+        val endpoint = preferences.getString(storageKey(KEY_ENDPOINT, providerId), null)?.trim().orEmpty()
         if (endpoint.isEmpty()) return null
 
-        val headersJson = preferences.getString(KEY_HEADERS_ENCRYPTED, null)
+        val headersJson = preferences.getString(storageKey(KEY_HEADERS_ENCRYPTED, providerId), null)
             ?.let { encrypted -> runCatching { decrypt(encrypted) }.getOrDefault("{}") }
             ?: "{}"
         val headers = runCatching {
@@ -36,7 +36,7 @@ class TranslationApiConfigStore @Inject constructor(
             json.keys().asSequence().associateWith { json.getString(it) }
         }.getOrDefault(emptyMap())
 
-        val encryptedKey = preferences.getString(KEY_API_KEY, null)
+        val encryptedKey = preferences.getString(storageKey(KEY_API_KEY, providerId), null)
         val apiKey = encryptedKey
             ?.let { encrypted -> runCatching { decrypt(encrypted) }.getOrDefault("") }
             .orEmpty()
@@ -44,19 +44,22 @@ class TranslationApiConfigStore @Inject constructor(
         return TranslationApiConfiguration(
             endpoint = endpoint,
             apiKey = apiKey,
-            model = preferences.getString(KEY_MODEL, "").orEmpty(),
+            model = preferences.getString(storageKey(KEY_MODEL, providerId), "").orEmpty(),
             headers = headers,
             requestTemplate = preferences.getString(
                 KEY_TEMPLATE,
                 TranslationApiConfiguration.DEFAULT_REQUEST_TEMPLATE,
             ).orEmpty(),
-            responsePath = preferences.getString(KEY_RESPONSE_PATH, "choices.0.message.content")
+            responsePath = preferences.getString(storageKey(KEY_RESPONSE_PATH, providerId), "choices.0.message.content")
                 .orEmpty(),
-            timeoutSeconds = preferences.getLong(KEY_TIMEOUT, 45L).coerceIn(5L, 180L),
+            timeoutSeconds = preferences.getLong(storageKey(KEY_TIMEOUT, providerId), 45L).coerceIn(5L, 180L),
         )
     }
 
-    fun saveConfiguration(configuration: TranslationApiConfiguration) {
+    fun saveConfiguration(
+        configuration: TranslationApiConfiguration,
+        providerId: String = TranslationEngine.HTTP_JSON.id,
+    ) {
         require(configuration.endpoint.isNotBlank()) { "API endpoint is required." }
         require(configuration.responsePath.isNotBlank()) { "Response JSON path is required." }
         require(configuration.timeoutSeconds in 5L..180L) { "Timeout must be between 5 and 180 seconds." }
@@ -66,18 +69,21 @@ class TranslationApiConfigStore @Inject constructor(
         }
 
         preferences.edit()
-            .putString(KEY_ENDPOINT, configuration.endpoint.trim())
-            .putString(KEY_API_KEY, configuration.apiKey.takeIf { it.isNotEmpty() }?.let(::encrypt))
-            .putString(KEY_MODEL, configuration.model)
-            .putString(KEY_HEADERS_ENCRYPTED, encrypt(headersJson.toString()))
-            .putString(KEY_TEMPLATE, configuration.requestTemplate)
-            .putString(KEY_RESPONSE_PATH, configuration.responsePath)
-            .putLong(KEY_TIMEOUT, configuration.timeoutSeconds)
+            .putString(storageKey(KEY_ENDPOINT, providerId), configuration.endpoint.trim())
+            .putString(storageKey(KEY_API_KEY, providerId), configuration.apiKey.takeIf { it.isNotEmpty() }?.let(::encrypt))
+            .putString(storageKey(KEY_MODEL, providerId), configuration.model)
+            .putString(storageKey(KEY_HEADERS_ENCRYPTED, providerId), encrypt(headersJson.toString()))
+            .putString(storageKey(KEY_TEMPLATE, providerId), configuration.requestTemplate)
+            .putString(storageKey(KEY_RESPONSE_PATH, providerId), configuration.responsePath)
+            .putLong(storageKey(KEY_TIMEOUT, providerId), configuration.timeoutSeconds)
             .apply()
     }
 
-    fun clearConfiguration() {
-        preferences.edit().clear().apply()
+    fun clearConfiguration(providerId: String = TranslationEngine.HTTP_JSON.id) {
+        val keys = listOf(KEY_ENDPOINT, KEY_API_KEY, KEY_MODEL, KEY_HEADERS_ENCRYPTED, KEY_TEMPLATE, KEY_RESPONSE_PATH, KEY_TIMEOUT)
+        preferences.edit().also { editor ->
+            keys.forEach { editor.remove(storageKey(it, providerId)) }
+        }.apply()
     }
 
     fun targetLanguage(): String =
@@ -100,6 +106,9 @@ class TranslationApiConfigStore @Inject constructor(
     fun setSelectedEngine(engine: TranslationEngine) {
         preferences.edit().putString(KEY_ENGINE, engine.id).apply()
     }
+
+    private fun storageKey(key: String, providerId: String): String =
+        if (providerId == TranslationEngine.HTTP_JSON.id) key else "${providerId}_$key"
 
     private fun encrypt(plainText: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
