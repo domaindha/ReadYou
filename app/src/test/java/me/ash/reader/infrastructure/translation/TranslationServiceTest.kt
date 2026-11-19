@@ -34,7 +34,7 @@ class TranslationServiceTest {
 
     @Test
     fun malformedBatchResponsesFallbackWithoutCachingMisalignedText() = runBlocking {
-        listOf("missing", "reordered", "trailing").forEach { malformedMode ->
+        listOf("missing", "reordered", "trailing", "empty").forEach { malformedMode ->
             val provider = MalformedBatchProvider(malformedMode)
             val registry = TranslationProviderRegistry(setOf(provider))
             val cache = Mockito.mock(TranslationFileCache::class.java)
@@ -396,6 +396,7 @@ class TranslationServiceTest {
                 "missing" -> "${markers[0].value}translated:$first${markers[2].value}"
                 "reordered" -> "${markers[0].value}translated:$second${markers[2].value}translated:$first${markers[1].value}"
                 "trailing" -> "${markers[0].value}translated:$first${markers[1].value}translated:$second${markers[2].value}unexpected"
+                "empty" -> "${markers[0].value}translated:$first${markers[1].value}${markers[2].value}"
                 else -> error("Unknown malformed batch mode: $mode")
             }
             return TranslationResponse(result, request.sourceLanguage, id)

@@ -304,6 +304,9 @@ class TranslationService @Inject constructor(
             cursor = markerPosition + markers[markerIndex].length
         }
 
+        // A preserved marker sequence is not enough: an empty segment would erase
+        // the corresponding article text, so retry the original segments individually.
+        if (result.any { it.isBlank() }) return null
         if (translated.substring(cursor).isNotBlank()) return null
         return result
     }
