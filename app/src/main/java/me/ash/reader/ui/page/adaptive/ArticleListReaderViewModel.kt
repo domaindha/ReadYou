@@ -321,6 +321,7 @@ constructor(
                             isTranslated = false,
                             isBilingual = false,
                             isTranslating = false,
+                            translationProgress = null,
                             translationError = null,
                         )
                         .prefetchArticleId()
@@ -363,6 +364,7 @@ constructor(
             translatedContent = null,
             isTranslated = false,
             isTranslating = false,
+            translationProgress = null,
             translationError = null,
             )
         }
@@ -386,6 +388,7 @@ constructor(
                                 translatedContent = null,
                                 isTranslated = false,
                                 isTranslating = false,
+                                translationProgress = null,
                                 translationError = null,
                             )
                         }
@@ -399,6 +402,7 @@ constructor(
                                 translatedContent = null,
                                 isTranslated = false,
                                 isTranslating = false,
+                                translationProgress = null,
                                 translationError = null,
                             )
                         }
@@ -475,7 +479,7 @@ constructor(
         val sourceLanguage = translationService.sourceLanguage().takeUnless { it == "auto" }
 
         _readerState.update {
-            it.copy(isTranslating = true, translationError = null)
+            it.copy(isTranslating = true, translationProgress = 0f, translationError = null)
         }
 
         translationJob = viewModelScope.launch {
@@ -486,7 +490,19 @@ constructor(
                     targetLanguage = targetLanguage,
                     providerId = providerId,
                     sourceLanguage = sourceLanguage,
+                    onProgress = { progress ->
+                        _readerState.update { current ->
+                            if (current.articleId == articleId && current.isTranslating) {
+                                current.copy(translationProgress = progress.coerceIn(0f, 1f) * 0.9f)
+                            } else current
+                        }
+                    },
                 )
+                _readerState.update { current ->
+                    if (current.articleId == articleId && current.isTranslating) {
+                        current.copy(translationProgress = 0.95f)
+                    } else current
+                }
                 val translatedTitle = translationService.translateText(
                     text = sourceTitle,
                     targetLanguage = targetLanguage,
@@ -502,6 +518,7 @@ constructor(
                         isTranslated = true,
                         isBilingual = translationService.isBilingualReadingEnabled(),
                         isTranslating = false,
+                        translationProgress = null,
                         translationError = null,
                     )
                 }
@@ -513,6 +530,7 @@ constructor(
                     if (current.articleId != articleId) current
                     else current.copy(
                         isTranslating = false,
+                        translationProgress = null,
                         translationError = error.message ?: "Translation failed",
                     )
                 }
@@ -528,6 +546,7 @@ constructor(
                 translatedContent = null,
                 isTranslated = false,
                 isTranslating = false,
+                translationProgress = null,
                 translationError = null,
             )
         }
@@ -609,6 +628,7 @@ data class ReaderState(
     val isTranslated: Boolean = false,
     val isBilingual: Boolean = false,
     val isTranslating: Boolean = false,
+    val translationProgress: Float? = null,
     val translationError: String? = null,
     val content: ContentState = Loading,
     val listIndex: Int? = null,
