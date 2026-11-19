@@ -75,8 +75,10 @@ class TranslationService @Inject constructor(
         collectTranslatableTextNodes(body, textNodes)
         if (textNodes.isEmpty()) return html
 
-        val resolvedSourceLanguage = sourceLanguage ?: if (!provider.capabilities.supportsBatching) {
-            onDeviceProvider().detectLanguage(body.text()).takeIf { it != "und" }
+        val selectedProvider = providerFor(engine)
+        val resolvedSourceLanguage = sourceLanguage ?: if (selectedProvider.capabilities.supportsLanguageDetection) {
+            (selectedProvider as? TranslationLanguageDetector)
+                ?.detectLanguage(body.text())?.takeIf { it != "und" }
         } else null
 
         // Keep the association between DOM nodes and their chunks to avoid moving text
