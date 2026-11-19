@@ -76,6 +76,10 @@ fun ReadingPage(
     val boldCharacters = LocalReadingBoldCharacters.current
     val coroutineScope = rememberCoroutineScope()
 
+    LaunchedEffect(readerState.translationError) {
+        readerState.translationError?.let { context.showToast(it) }
+    }
+
     var isReaderScrollingDown by remember { mutableStateOf(false) }
     var showFullScreenImageViewer by remember { mutableStateOf(false) }
 
@@ -106,7 +110,7 @@ fun ReadingPage(
                     TopBar(
                         isShow = isShowToolBar,
                         isScrolled = showTopDivider,
-                        title = readerState.title,
+                        title = if (readerState.isTranslated) readerState.translatedTitle ?: readerState.title else readerState.title,
                         link = readerState.link,
                         onClick = { bringToTop = true },
                         navigationAction = navigationAction,
@@ -253,9 +257,9 @@ fun ReadingPage(
                                                     enabled = isPullToSwitchArticleEnabled,
                                                 ),
                                             contentPadding = paddings,
-                                            content = content.text ?: "",
+                                            content = if (isTranslated) translatedContent ?: content.text ?: "" else content.text ?: "",
                                             feedName = feedName,
-                                            title = title.toString(),
+                                            title = if (isTranslated) translatedTitle ?: title.orEmpty() else title.toString(),
                                             author = author,
                                             link = link,
                                             publishedDate = publishedDate,
@@ -288,6 +292,8 @@ fun ReadingPage(
                             readerState.content is ReaderState.FullContent ||
                                 readerState.content is ReaderState.Error,
                         isBoldCharacters = boldCharacters.value,
+                        isTranslated = readerState.isTranslated,
+                        isTranslating = readerState.isTranslating,
                         onUnread = { viewModel.updateReadStatus(it) },
                         onStarred = { viewModel.updateStarredStatus(it) },
                         onNextArticle = {
@@ -301,9 +307,12 @@ fun ReadingPage(
                             else viewModel.renderDescriptionContent()
                         },
                         onBoldCharacters = { (!boldCharacters).put(context, coroutineScope) },
+                        onTranslate = { viewModel.toggleTranslation() },
                         onReadAloud = {
                             viewModel.textToSpeechManager.readHtml(
-                                readerState.content.text ?: return@BottomBar
+                                (if (readerState.isTranslated) readerState.translatedContent else null)
+                                    ?: readerState.content.text
+                                    ?: return@BottomBar
                             )
                         },
                         ttsButton = {
@@ -316,7 +325,9 @@ fun ReadingPage(
 
                                         TextToSpeechManager.State.Idle -> {
                                             viewModel.textToSpeechManager.readHtml(
-                                                readerState.content.text ?: ""
+                                                (if (readerState.isTranslated) readerState.translatedContent else null)
+                                                    ?: readerState.content.text
+                                                    ?: ""
                                             )
                                         }
 

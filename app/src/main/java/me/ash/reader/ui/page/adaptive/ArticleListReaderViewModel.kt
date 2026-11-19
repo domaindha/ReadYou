@@ -8,8 +8,10 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import kotlin.collections.any
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
@@ -46,6 +48,7 @@ import me.ash.reader.infrastructure.di.IODispatcher
 import me.ash.reader.infrastructure.preference.PullToLoadNextFeedPreference
 import me.ash.reader.infrastructure.preference.SettingsProvider
 import me.ash.reader.infrastructure.rss.ReaderCacheHelper
+import me.ash.reader.infrastructure.translation.TranslationService
 import timber.log.Timber
 
 private const val TAG = "FlowViewModel"
@@ -65,6 +68,7 @@ constructor(
     private val readerCacheHelper: ReaderCacheHelper,
     val textToSpeechManager: TextToSpeechManager,
     private val imageDownloader: AndroidImageDownloader,
+    private val translationService: TranslationService,
     private val articleListUseCase: ArticlePagingListUseCase,
     workManager: WorkManager,
 ) : ViewModel() {
@@ -308,6 +312,11 @@ constructor(
                             author = article.author,
                             link = article.link,
                             publishedDate = article.date,
+                            translatedTitle = null,
+                            translatedContent = null,
+                            isTranslated = false,
+                            isTranslating = false,
+                            translationError = null,
                         )
                         .prefetchArticleId()
                         .renderContent(this)
@@ -339,7 +348,12 @@ constructor(
     fun renderDescriptionContent() {
         _readerState.update {
             it.copy(
-                content = ReaderState.Description(content = currentArticle?.rawDescription ?: "")
+                content = ReaderState.Description(content = currentArticle?.rawDescription ?: ""),
+            translatedTitle = null,
+            translatedContent = null,
+            isTranslated = false,
+            isTranslating = false,
+            translationError = null,
             )
         }
     }
@@ -351,12 +365,26 @@ constructor(
                     .readOrFetchFullContent(currentArticle!!)
                     .onSuccess { content ->
                         _readerState.update {
-                            it.copy(content = ReaderState.FullContent(content = content))
+                            it.copy(
+                                content = ReaderState.FullContent(content = content),
+                                translatedTitle = null,
+                                translatedContent = null,
+                                isTranslated = false,
+                                isTranslating = false,
+                                translationError = null,
+                            )
                         }
                     }
                     .onFailure { th ->
                         _readerState.update {
-                            it.copy(content = ReaderState.Error(th.message.toString()))
+                            it.copy(
+                                content = ReaderState.Error(th.message.toString()),
+                                translatedTitle = null,
+                                translatedContent = null,
+                                isTranslated = false,
+                                isTranslating = false,
+                                translationError = null,
+                            )
                         }
                     }
             }
@@ -386,8 +414,93 @@ constructor(
         }
     }
 
+
+    /**
+     * Translate the currently displayed article. The original RSS/HTML is never overwritten;
+     * switching the state back to false immediately restores the source content.
+     */
+    fun toggleTranslation() {
+        val state = _readerState.value
+        if (state.articleId == null || state.isTranslating) return
+
+        if (state.isTranslated) {
+            _readerState.update { it.copy(isTranslated = false) }
+            return
+        }
+
+        if (state.translatedContent != null) {
+            _readerState.update { it.copy(isTranslated = true) }
+            return
+        }
+
+        val sourceContent = when (val content = state.content) {
+            is ReaderState.Description -> content.content
+            is ReaderState.FullContent -> content.content
+            else -> currentArticle?.rawDescription ?: return
+        }
+        if (sourceContent.isBlank()) return
+
+        val articleId = state.articleId
+        val sourceTitle = state.title.orEmpty()
+        val targetLanguage = Locale.getDefault()
+            .takeIf { it.language.isNotBlank() }
+            ?.toLanguageTag()
+            ?: "zh-CN"
+
+        _readerState.update {
+            it.copy(isTranslating = true, translationError = null)
+        }
+
+        viewModelScope.launch {
+            try {
+                val engine = translationService.selectedEngine()
+                val translatedContent = translationService.translateHtml(
+                    html = sourceContent,
+                    targetLanguage = targetLanguage,
+                    engine = engine,
+                )
+                val translatedTitle = translationService.translateText(
+                    text = sourceTitle,
+                    targetLanguage = targetLanguage,
+                    engine = engine,
+                ).translatedText
+
+                _readerState.update { current ->
+                    if (current.articleId != articleId) current
+                    else current.copy(
+                        translatedTitle = translatedTitle,
+                        translatedContent = translatedContent,
+                        isTranslated = true,
+                        isTranslating = false,
+                        translationError = null,
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                Timber.e(error, "Article translation failed")
+                _readerState.update { current ->
+                    if (current.articleId != articleId) current
+                    else current.copy(
+                        isTranslating = false,
+                        translationError = error.message ?: "Translation failed",
+                    )
+                }
+            }
+        }
+    }
+
     private fun setLoading() {
-        _readerState.update { it.copy(content = ReaderState.Loading) }
+        _readerState.update {
+            it.copy(
+                content = ReaderState.Loading,
+                translatedTitle = null,
+                translatedContent = null,
+                isTranslated = false,
+                isTranslating = false,
+                translationError = null,
+            )
+        }
     }
 
     fun ReaderState.prefetchArticleId(): ReaderState {
@@ -461,6 +574,11 @@ data class ReaderState(
     val author: String? = null,
     val link: String? = null,
     val publishedDate: Date = Date(0L),
+    val translatedTitle: String? = null,
+    val translatedContent: String? = null,
+    val isTranslated: Boolean = false,
+    val isTranslating: Boolean = false,
+    val translationError: String? = null,
     val content: ContentState = Loading,
     val listIndex: Int? = null,
     val nextArticle: PrefetchResult? = null,
