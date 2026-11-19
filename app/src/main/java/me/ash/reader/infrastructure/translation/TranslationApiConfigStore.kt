@@ -90,6 +90,10 @@ class TranslationApiConfigStore @Inject constructor(
         preferences.edit().putString(KEY_TARGET_LANGUAGE, languageTag.trim()).apply()
     }
 
+    fun sourceLanguage(): String = preferences.getString(KEY_SOURCE_LANGUAGE, "auto")?.takeIf { it.isNotBlank() } ?: "auto"
+
+    fun setSourceLanguage(languageTag: String) { preferences.edit().putString(KEY_SOURCE_LANGUAGE, languageTag.trim()).apply() }
+
     fun selectedEngine(): TranslationEngine =
         TranslationEngine.fromId(preferences.getString(KEY_ENGINE, TranslationEngine.ON_DEVICE.id))
 
@@ -146,5 +150,6 @@ class TranslationApiConfigStore @Inject constructor(
         const val KEY_TIMEOUT = "timeout_seconds"
         const val KEY_ENGINE = "selected_engine"
         const val KEY_TARGET_LANGUAGE = "target_language"
+        const val KEY_SOURCE_LANGUAGE = "source_language"
     }
 }
