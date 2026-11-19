@@ -14,8 +14,7 @@ import org.jsoup.Jsoup
  */
 @Singleton
 class TranslationService @Inject constructor(
-    private val onDeviceProvider: MlKitTranslationProvider,
-    private val httpJsonProvider: HttpJsonTranslationProvider,
+    private val providerRegistry: TranslationProviderRegistry,
     private val cache: TranslationFileCache,
     private val configStore: TranslationApiConfigStore,
 ) {
@@ -283,10 +282,7 @@ class TranslationService @Inject constructor(
     }
 
     private fun providerFor(engine: TranslationEngine): TranslationProvider =
-        when (engine) {
-            TranslationEngine.ON_DEVICE -> onDeviceProvider
-            TranslationEngine.HTTP_JSON -> httpJsonProvider
-        }
+        providerRegistry.requireProvider(engine.id)
 
     private fun collectTranslatableTextNodes(element: Element, result: MutableList<TextNode>) {
         for (child in element.childNodes()) {
