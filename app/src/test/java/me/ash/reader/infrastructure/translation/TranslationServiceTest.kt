@@ -87,10 +87,14 @@ class TranslationServiceTest {
         assertEquals("translated:Hello translated:world", document.selectFirst("p")?.text())
         assertEquals("fun main() = Unit", document.selectFirst("pre")?.text())
         assertEquals("sourceCode()", document.selectFirst("code")?.text())
+        assertEquals(
+            "translated:Keep sourceCode() translated: intact",
+            document.select("p").getOrNull(1)?.text(),
+        )
         assertEquals("Do not translate this", document.selectFirst(".notranslate")?.text())
         assertEquals("const secret = \"unchanged\";", document.selectFirst("script")?.data())
         assertEquals(".sample { display: none; }", document.selectFirst("style")?.data())
-        assertEquals(3, provider.requestCount)
+        assertEquals(4, provider.requestCount)
     }
 
     @Test
