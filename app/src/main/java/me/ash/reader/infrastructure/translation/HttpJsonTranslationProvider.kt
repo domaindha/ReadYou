@@ -44,11 +44,7 @@ class HttpJsonTranslationProvider @Inject constructor(
 
         val endpoint = config.endpoint.toHttpUrlOrNull()
             ?: throw IllegalArgumentException("The translation API endpoint is not a valid HTTP URL.")
-        val hasSensitiveHeaders = config.headers.keys.any { name ->
-            name.equals("Authorization", ignoreCase = true) ||
-                name.equals("X-API-Key", ignoreCase = true) ||
-                name.equals("Cookie", ignoreCase = true)
-        }
+        val hasSensitiveHeaders = config.headers.keys.any(::isSensitiveHeader)
         if (endpoint.scheme != "https" && (config.apiKey.isNotBlank() || hasSensitiveHeaders)) {
             throw IllegalArgumentException("Credentials and sensitive headers may only be sent to an HTTPS endpoint.")
         }
@@ -128,6 +124,24 @@ class HttpJsonTranslationProvider @Inject constructor(
 
     private fun replaceHeaderPlaceholders(value: String, apiKey: String): String =
         value.replace("{{apiKey}}", apiKey)
+
+    /**
+     * Custom header names are user-controlled, so do not rely on a short allowlist:
+     * vendors commonly use names such as Api-Key, X-Auth-Token, or X-Client-Secret.
+     */
+    private fun isSensitiveHeader(name: String): Boolean {
+        val normalized = name.filter(Char::isLetterOrDigit).lowercase()
+        return listOf(
+            "authorization",
+            "apikey",
+            "token",
+            "cookie",
+            "session",
+            "secret",
+            "credential",
+            "password",
+        ).any(normalized::contains)
+    }
 
     private fun extractJsonPath(json: String, path: String): String {
         var current: Any? = JSONObject(json)

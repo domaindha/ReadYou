@@ -90,6 +90,26 @@ class HttpJsonTranslationProviderTest {
     }
 
     @Test
+    fun commonCredentialHeaderNamesAreRejectedForPlainHttpEndpoints() {
+        listOf("X-Auth-Token", "Api-Key", "X-Client-Secret", "Proxy-Authorization").forEach { header ->
+            val provider = providerWith(
+                TranslationApiConfiguration(
+                    endpoint = "http://127.0.0.1:1/translate",
+                    headers = mapOf(header to "sensitive-value"),
+                )
+            )
+
+            val error = org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+                runBlocking {
+                    provider.translate(TranslationRequest("hello", "en", "zh-CN"))
+                }
+            }
+
+            assertTrue("$header should require HTTPS", error.message.orEmpty().contains("HTTPS"))
+        }
+    }
+
+    @Test
     fun missingResponseJsonPathProducesAnExplicitError() {
         LocalJsonServer(200, """{"result":{"text":"translated"}}""").use { server ->
             val provider = providerWith(
