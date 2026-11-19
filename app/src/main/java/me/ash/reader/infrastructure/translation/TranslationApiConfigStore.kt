@@ -110,12 +110,24 @@ class TranslationApiConfigStore @Inject constructor(
         preferences.edit().putString(KEY_PROVIDER, providerId.trim()).apply()
     }
 
+    fun isAutoTranslationEnabled(feedId: String): Boolean {
+        require(feedId.isNotBlank()) { "Feed ID is required." }
+        return preferences.getBoolean(autoTranslationKey(feedId), false)
+    }
+
+    fun setAutoTranslationEnabled(feedId: String, enabled: Boolean) {
+        require(feedId.isNotBlank()) { "Feed ID is required." }
+        preferences.edit().putBoolean(autoTranslationKey(feedId), enabled).apply()
+    }
+
     fun selectedEngine(): TranslationEngine = TranslationEngine.fromId(selectedProviderId())
 
     fun setSelectedEngine(engine: TranslationEngine) = setSelectedProviderId(engine.id)
 
     private fun storageKey(key: String, providerId: String): String =
         if (providerId == TranslationEngine.HTTP_JSON.id) key else "${providerId}_$key"
+
+    private fun autoTranslationKey(feedId: String): String = "auto_translate_feed_$feedId"
 
     private fun encrypt(plainText: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)

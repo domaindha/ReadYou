@@ -23,6 +23,8 @@ import me.ash.reader.infrastructure.di.IODispatcher
 import me.ash.reader.infrastructure.di.MainDispatcher
 import me.ash.reader.infrastructure.rss.RssHelper
 
+import me.ash.reader.infrastructure.translation.TranslationService
+
 @OptIn(ExperimentalMaterialApi::class)
 @HiltViewModel
 class FeedOptionViewModel
@@ -34,6 +36,7 @@ constructor(
     @ApplicationScope private val applicationScope: CoroutineScope,
     private val rssHelper: RssHelper,
     private val feedDao: FeedDao,
+    private val translationService: TranslationService,
 ) : ViewModel() {
 
     private val _feedOptionUiState = MutableStateFlow(FeedOptionUiState())
@@ -51,7 +54,13 @@ constructor(
 
     suspend fun fetchFeed(feedId: String) {
         val feed = rssService.get().findFeedById(feedId)
-        _feedOptionUiState.update { it.copy(feed = feed, selectedGroupId = feed?.groupId ?: "") }
+        _feedOptionUiState.update {
+            it.copy(
+                feed = feed,
+                selectedGroupId = feed?.groupId ?: "",
+                isAutoTranslateEnabled = feed?.let { current -> translationService.isAutoTranslationEnabled(current.id) } ?: false,
+            )
+        }
     }
 
     fun showNewGroupDialog() {
@@ -117,6 +126,13 @@ constructor(
                 fetchFeed(it.id)
             }
         }
+    }
+
+    fun changeAutoTranslationPreset() {
+        val feed = _feedOptionUiState.value.feed ?: return
+        val enabled = !translationService.isAutoTranslationEnabled(feed.id)
+        translationService.setAutoTranslationEnabled(feed.id, enabled)
+        _feedOptionUiState.update { it.copy(isAutoTranslateEnabled = enabled) }
     }
 
     fun changeAllowNotificationPreset() {
@@ -234,4 +250,5 @@ data class FeedOptionUiState(
     val renameDialogVisible: Boolean = false,
     val newUrl: String = "",
     val changeUrlDialogVisible: Boolean = false,
+    val isAutoTranslateEnabled: Boolean = false,
 )

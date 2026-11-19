@@ -325,6 +325,7 @@ constructor(
                         .prefetchArticleId()
                         .renderContent(this)
                 }
+                maybeAutoTranslate(article.id)
             }
         }
     }
@@ -364,15 +365,18 @@ constructor(
             translationError = null,
             )
         }
+        currentArticle?.id?.let(::maybeAutoTranslate)
     }
 
     fun renderFullContent() {
         translationJob?.cancel()
         translationJob = null
+        val articleId = currentArticle?.id ?: return
+        val article = currentArticle ?: return
         val fetchJob =
             viewModelScope.launch {
                 readerCacheHelper
-                    .readOrFetchFullContent(currentArticle!!)
+                    .readOrFetchFullContent(article)
                     .onSuccess { content ->
                         _readerState.update {
                             it.copy(
@@ -384,6 +388,7 @@ constructor(
                                 translationError = null,
                             )
                         }
+                        maybeAutoTranslate(articleId)
                     }
                     .onFailure { th ->
                         _readerState.update {
@@ -404,6 +409,13 @@ constructor(
                 setLoading()
             }
         }
+    }
+
+    private fun maybeAutoTranslate(articleId: String) {
+        val feedId = currentFeed?.id ?: return
+        if (_readerState.value.articleId != articleId) return
+        if (_readerState.value.content is ReaderState.Loading || _readerState.value.content is ReaderState.Error) return
+        if (translationService.isAutoTranslationEnabled(feedId)) toggleTranslation()
     }
 
     fun updateReadStatus(isUnread: Boolean) {

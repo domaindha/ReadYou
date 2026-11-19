@@ -29,6 +29,12 @@ class TranslationService @Inject constructor(
         configStore.setSelectedProviderId(providerId)
     }
 
+    fun isAutoTranslationEnabled(feedId: String): Boolean =
+        configStore.isAutoTranslationEnabled(feedId)
+
+    fun setAutoTranslationEnabled(feedId: String, enabled: Boolean) =
+        configStore.setAutoTranslationEnabled(feedId, enabled)
+
     fun targetLanguage(): String = configStore.targetLanguage()
 
     fun sourceLanguage(): String = configStore.sourceLanguage()
