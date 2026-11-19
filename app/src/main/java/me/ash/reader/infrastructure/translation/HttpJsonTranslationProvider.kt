@@ -130,11 +130,11 @@ class HttpJsonTranslationProvider @Inject constructor(
         value.replace("{{apiKey}}", apiKey)
 
     private fun extractJsonPath(json: String, path: String): String {
-        var current: Any = JSONObject(json)
+        var current: Any? = JSONObject(json)
         for (part in path.split('.').filter { it.isNotEmpty() }) {
-            current = when (current) {
-                is JSONObject -> current.opt(part)
-                is JSONArray -> part.toIntOrNull()?.let(current::opt)
+            current = when (val node = current) {
+                is JSONObject -> node.opt(part)
+                is JSONArray -> part.toIntOrNull()?.let(node::opt)
                     ?: throw IllegalArgumentException("Invalid array index '$part' in response path.")
                 else -> throw IllegalArgumentException("Response path '$path' does not resolve to a JSON value.")
             }
