@@ -169,6 +169,32 @@ fun TranslationSettingsPage(
                     )
                 }
 
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("翻译缓存", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "缓存保存已翻译的文本片段。清理后，后续阅读时会重新翻译。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        enabled = !busy,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                status = "正在清理翻译缓存…"
+                                try {
+                                    viewModel.clearTranslationCache()
+                                    status = "翻译缓存已清理"
+                                } catch (error: Throwable) {
+                                    status = error.message ?: "清理缓存失败"
+                                } finally {
+                                    busy = false
+                                }
+                            }
+                        },
+                    ) { Text("清理翻译缓存") }
+                }
+
                 Text("翻译引擎", style = MaterialTheme.typography.titleMedium)
                 providers.forEach { provider ->
                     Row(verticalAlignment = Alignment.CenterVertically) {

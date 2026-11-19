@@ -25,6 +25,8 @@ class TranslationSettingsViewModel @Inject constructor(
 
     fun isBilingualReadingEnabled(): Boolean = translationService.isBilingualReadingEnabled()
 
+    suspend fun clearTranslationCache() = translationService.clearTranslationCache()
+
     fun setBilingualReadingEnabled(enabled: Boolean) =
         translationService.setBilingualReadingEnabled(enabled)
 
