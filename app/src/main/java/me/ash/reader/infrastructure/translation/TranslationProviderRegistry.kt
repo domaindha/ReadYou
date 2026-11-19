@@ -12,7 +12,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class TranslationProviderRegistry @Inject constructor(
-    onDeviceProvider: MlKitTranslationProvider,
+    val onDeviceProvider: MlKitTranslationProvider,
     httpJsonProvider: HttpJsonTranslationProvider,
 ) {
     private val providers: Map<String, TranslationProvider> = listOf(
