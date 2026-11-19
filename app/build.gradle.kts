@@ -205,6 +205,7 @@ dependencies {
 
     // Testing
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
     androidTestImplementation(libs.junit.ext)
     androidTestImplementation(libs.espresso)
     testImplementation(libs.mockito.core)

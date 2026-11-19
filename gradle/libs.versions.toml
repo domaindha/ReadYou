@@ -54,6 +54,7 @@ glance = "1.2.0-beta01"
 mlkitTranslate = "17.0.3"
 mlkitLanguageId = "17.0.6"
 jsoup = "1.24.1"
+orgJson = "20250517"
 
 nav3 = "1.0.0"
 kotlinxSerializationCore = "1.9.0"
@@ -146,6 +147,7 @@ timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "tim
 mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkitTranslate" }
 mlkit-language-id = { group = "com.google.mlkit", name = "language-id", version.ref = "mlkitLanguageId" }
 jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
+org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }
