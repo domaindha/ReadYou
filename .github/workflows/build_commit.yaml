@@ -1,6 +1,7 @@
 name: "Build Commit"
 on: push
 
+# CI trigger commit after enabling Actions in the fork.
 jobs:
     build:
         runs-on: ubuntu-latest
