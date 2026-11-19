@@ -76,7 +76,7 @@ class TranslationService @Inject constructor(
         if (textNodes.isEmpty()) return html
 
         val resolvedSourceLanguage = sourceLanguage ?: if (engine == TranslationEngine.ON_DEVICE) {
-            onDeviceProvider.detectLanguage(body.text()).takeIf { it != "und" }
+            providerRegistry.onDeviceProvider.detectLanguage(body.text()).takeIf { it != "und" }
         } else null
 
         // Keep the association between DOM nodes and their chunks to avoid moving text
@@ -102,13 +102,13 @@ class TranslationService @Inject constructor(
     }
 
     suspend fun downloadOnDeviceModel(sourceLanguage: String, targetLanguage: String) =
-        onDeviceProvider.downloadModel(sourceLanguage, targetLanguage)
+        providerRegistry.onDeviceProvider.downloadModel(sourceLanguage, targetLanguage)
 
     suspend fun getDownloadedOnDeviceModels(): List<String> =
-        onDeviceProvider.downloadedModels()
+        providerRegistry.onDeviceProvider.downloadedModels()
 
     suspend fun deleteOnDeviceModel(languageTag: String) =
-        onDeviceProvider.deleteModel(languageTag)
+        providerRegistry.onDeviceProvider.deleteModel(languageTag)
 
     suspend fun clearTranslationCache() = cache.clear()
 
