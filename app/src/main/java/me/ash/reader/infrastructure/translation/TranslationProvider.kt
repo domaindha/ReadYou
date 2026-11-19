@@ -12,6 +12,7 @@ data class TranslationProviderCapabilities(
 /** Provider contract shared by offline and remote translation engines. */
 interface TranslationProvider {
     val id: String
+    val displayName: String get() = id
     val capabilities: TranslationProviderCapabilities
     suspend fun translate(request: TranslationRequest): TranslationResponse
 }
