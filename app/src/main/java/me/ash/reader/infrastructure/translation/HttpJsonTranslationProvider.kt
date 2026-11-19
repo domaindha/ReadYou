@@ -118,8 +118,8 @@ class HttpJsonTranslationProvider @Inject constructor(
     }
 
     private fun replaceTokens(value: String, values: Map<String, String>): String =
-        values.entries.fold(value) { current, (key, replacement) ->
-            current.replace("{{$key}}", replacement)
+        PLACEHOLDER_PATTERN.replace(value) { match ->
+            values[match.groupValues[1]] ?: match.value
         }
 
     private fun replaceHeaderPlaceholders(value: String, apiKey: String): String =
@@ -194,5 +194,6 @@ class HttpJsonTranslationProvider @Inject constructor(
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        val PLACEHOLDER_PATTERN = Regex("""\\{\\{(text|sourceLanguage|targetLanguage|model)\\}\\}""")
     }
 }

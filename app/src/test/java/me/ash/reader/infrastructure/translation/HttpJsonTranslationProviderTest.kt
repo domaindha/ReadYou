@@ -31,7 +31,7 @@ class HttpJsonTranslationProviderTest {
             val translated = runBlocking {
                 provider.translate(
                     TranslationRequest(
-                        text = "A quote: \"hello\"\nand a second line",
+                        text = "A quote: \"hello\"\nand a second line with {{targetLanguage}} and {{model}}",
                         sourceLanguage = "en",
                         targetLanguage = "zh-CN",
                     )
@@ -41,7 +41,7 @@ class HttpJsonTranslationProviderTest {
             server.awaitRequest()
             assertEquals("你好，世界", translated.translatedText)
             val requestJson = JSONObject(server.requestBody)
-            assertEquals("A quote: \"hello\"\nand a second line", requestJson.getString("q"))
+            assertEquals("A quote: \"hello\"\nand a second line with {{targetLanguage}} and {{model}}", requestJson.getString("q"))
             assertEquals("en", requestJson.getString("source"))
             assertEquals("zh-CN", requestJson.getString("target"))
             assertEquals("test-model", requestJson.getString("model"))
