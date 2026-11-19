@@ -88,13 +88,14 @@ class TranslationServiceTest {
         assertEquals("fun main() = Unit", document.selectFirst("pre")?.text())
         assertEquals("sourceCode()", document.selectFirst("code")?.text())
         assertEquals(
-            "translated:Keep sourceCode() translated: intact",
+            "translated:Keep sourceCode() translated:intact",
             document.select("p").getOrNull(1)?.text(),
         )
         assertEquals("Do not translate this", document.selectFirst(".notranslate")?.text())
         assertEquals("const secret = \"unchanged\";", document.selectFirst("script")?.data())
         assertEquals(".sample { display: none; }", document.selectFirst("style")?.data())
         assertEquals(4, provider.requestCount)
+        assertEquals(listOf("Hello", "world", "Keep", "intact"), provider.requests)
     }
 
     @Test
@@ -170,9 +171,11 @@ class TranslationServiceTest {
             supportsBatching = false,
         )
         var requestCount = 0
+        val requests = mutableListOf<String>()
 
         override suspend fun translate(request: TranslationRequest): TranslationResponse {
             requestCount++
+            requests += request.text
             return TranslationResponse("translated:${request.text}", request.sourceLanguage, id)
         }
     }

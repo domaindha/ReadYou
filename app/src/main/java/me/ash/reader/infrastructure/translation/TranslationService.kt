@@ -96,10 +96,21 @@ class TranslationService @Inject constructor(
             detector.detectLanguage(body.text()).takeIf { it != "und" }
         } else null
 
-        // Keep the association between DOM nodes and their chunks to avoid moving text
-        // across markup boundaries when a paragraph exceeds the engine's input limit.
-        val nodeChunks = textNodes.map { node -> node to splitLongText(node.wholeText) }
-        val flattenedChunks = nodeChunks.flatMap { it.second }
+        // Preserve boundary whitespace outside the translation request. Providers may
+        // prepend or normalize text, so sending leading spaces can move them inside the
+        // translated word and break spacing around inline elements.
+        val nodeTranslations = textNodes.map { node ->
+            val original = node.wholeText
+            val contentStart = original.indexOfFirst { !it.isWhitespace() }
+            val contentEnd = original.indexOfLast { !it.isWhitespace() } + 1
+            TextNodeTranslation(
+                node = node,
+                leadingWhitespace = original.substring(0, contentStart),
+                chunks = splitLongText(original.substring(contentStart, contentEnd)),
+                trailingWhitespace = original.substring(contentEnd),
+            )
+        }
+        val flattenedChunks = nodeTranslations.flatMap { it.chunks }
         val translatedChunks = translateSegments(
             segments = flattenedChunks,
             sourceLanguage = resolvedSourceLanguage,
@@ -108,11 +119,13 @@ class TranslationService @Inject constructor(
         )
 
         var translatedIndex = 0
-        nodeChunks.forEachIndexed { nodeIndex, (node, chunks) ->
-            node.text(buildString {
-                repeat(chunks.size) { append(translatedChunks[translatedIndex++]) }
+        nodeTranslations.forEachIndexed { nodeIndex, translation ->
+            translation.node.text(buildString {
+                append(translation.leadingWhitespace)
+                repeat(translation.chunks.size) { append(translatedChunks[translatedIndex++]) }
+                append(translation.trailingWhitespace)
             })
-            onProgress((nodeIndex + 1).toFloat() / nodeChunks.size)
+            onProgress((nodeIndex + 1).toFloat() / nodeTranslations.size)
         }
 
         return body.html()
@@ -325,6 +338,13 @@ class TranslationService @Inject constructor(
         return provider as? TranslationModelManager
             ?: throw IllegalStateException("Provider '$providerId' declares model management but does not implement it.")
     }
+
+    private data class TextNodeTranslation(
+        val node: TextNode,
+        val leadingWhitespace: String,
+        val chunks: List<String>,
+        val trailingWhitespace: String,
+    )
 
     private fun collectTranslatableTextNodes(element: Element, result: MutableList<TextNode>) {
         for (child in element.childNodes()) {
