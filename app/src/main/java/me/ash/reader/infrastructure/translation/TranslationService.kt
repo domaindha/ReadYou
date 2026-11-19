@@ -41,7 +41,7 @@ class TranslationService @Inject constructor(
         val provider = providerFor(engine)
         val key = createCacheKey(
             provider.id,
-            cacheRevision(engine),
+            cacheRevision(provider.id),
             sourceLanguage,
             targetLanguage,
             text,
@@ -75,8 +75,8 @@ class TranslationService @Inject constructor(
         collectTranslatableTextNodes(body, textNodes)
         if (textNodes.isEmpty()) return html
 
-        val resolvedSourceLanguage = sourceLanguage ?: if (engine == TranslationEngine.ON_DEVICE) {
-            providerRegistry.onDeviceProvider.detectLanguage(body.text()).takeIf { it != "und" }
+        val resolvedSourceLanguage = sourceLanguage ?: if (!provider.capabilities.supportsBatching) {
+            onDeviceProvider().detectLanguage(body.text()).takeIf { it != "und" }
         } else null
 
         // Keep the association between DOM nodes and their chunks to avoid moving text
@@ -102,13 +102,13 @@ class TranslationService @Inject constructor(
     }
 
     suspend fun downloadOnDeviceModel(sourceLanguage: String, targetLanguage: String) =
-        providerRegistry.onDeviceProvider.downloadModel(sourceLanguage, targetLanguage)
+        onDeviceProvider().downloadModel(sourceLanguage, targetLanguage)
 
     suspend fun getDownloadedOnDeviceModels(): List<String> =
-        providerRegistry.onDeviceProvider.downloadedModels()
+        onDeviceProvider().downloadedModels()
 
     suspend fun deleteOnDeviceModel(languageTag: String) =
-        providerRegistry.onDeviceProvider.deleteModel(languageTag)
+        onDeviceProvider().deleteModel(languageTag)
 
     suspend fun clearTranslationCache() = cache.clear()
 
@@ -126,7 +126,7 @@ class TranslationService @Inject constructor(
         if (segments.isEmpty()) return emptyList()
 
         val provider = providerFor(engine)
-        val revision = cacheRevision(engine)
+        val revision = cacheRevision(provider.id)
         val results = MutableList<String?>(segments.size) { null }
         val missingIndices = mutableListOf<Int>()
 
@@ -265,9 +265,9 @@ class TranslationService @Inject constructor(
         return fields.joinToString("") { "${it.length}:$it" }
     }
 
-    private fun cacheRevision(engine: TranslationEngine): String {
-        if (engine != TranslationEngine.HTTP_JSON) return PROVIDER_REVISION
-        val config = configStore.loadConfiguration() ?: return "http-json-unconfigured"
+    private fun cacheRevision(providerId: String): String {
+        if (providerId == TranslationEngine.ON_DEVICE.id) return PROVIDER_REVISION
+        val config = configStore.loadConfiguration(providerId) ?: return "$providerId-unconfigured"
         val material = listOf(
             config.endpoint,
             config.model,
@@ -283,6 +283,10 @@ class TranslationService @Inject constructor(
 
     private fun providerFor(engine: TranslationEngine): TranslationProvider =
         providerRegistry.requireProvider(engine.id)
+
+    private fun onDeviceProvider(): MlKitTranslationProvider =
+        providerRegistry.requireProvider(TranslationEngine.ON_DEVICE.id) as? MlKitTranslationProvider
+            ?: throw IllegalStateException("The registered on-device provider does not support model management.")
 
     private fun collectTranslatableTextNodes(element: Element, result: MutableList<TextNode>) {
         for (child in element.childNodes()) {
