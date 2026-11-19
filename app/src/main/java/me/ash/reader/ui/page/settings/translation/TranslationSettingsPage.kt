@@ -42,6 +42,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import me.ash.reader.infrastructure.translation.AzureTranslatorProvider
+import me.ash.reader.infrastructure.translation.MyMemoryTranslationProvider
 import me.ash.reader.infrastructure.translation.TranslationApiConfiguration
 import me.ash.reader.infrastructure.translation.TranslationEngine
 import me.ash.reader.infrastructure.translation.TranslationLanguages
@@ -78,7 +80,13 @@ fun TranslationSettingsPage(
     var bilingualReading by rememberSaveable {
         mutableStateOf(viewModel.isBilingualReadingEnabled())
     }
-    var endpoint by rememberSaveable(selectedProviderId) { mutableStateOf(initialConfig?.endpoint.orEmpty()) }
+    var endpoint by rememberSaveable(selectedProviderId) {
+        mutableStateOf(
+            initialConfig?.endpoint ?: if (selectedProviderId == AzureTranslatorProvider.PROVIDER_ID) {
+                AzureTranslatorProvider.DEFAULT_ENDPOINT
+            } else ""
+        )
+    }
     // Do not place API credentials in Android saved-instance-state bundles.
     var apiKey by remember(selectedProviderId) { mutableStateOf(initialConfig?.apiKey.orEmpty()) }
     var model by rememberSaveable(selectedProviderId) { mutableStateOf(initialConfig?.model.orEmpty()) }
@@ -102,8 +110,12 @@ fun TranslationSettingsPage(
     }
     var sourceLanguage by rememberSaveable { mutableStateOf(viewModel.selectedSourceLanguage()) }
     val targetLanguageSupported = supportedLanguageTags?.contains(targetLanguage) ?: true
-    val sourceLanguageSupported = sourceLanguage == "auto" ||
-        supportedLanguageTags?.contains(sourceLanguage) != false
+    val requiresExplicitSourceLanguage = selectedProvider?.capabilities?.requiresExplicitSourceLanguage == true
+    val sourceLanguageSupported = if (requiresExplicitSourceLanguage) {
+        sourceLanguage != "auto" && supportedLanguageTags?.contains(sourceLanguage) != false
+    } else {
+        sourceLanguage == "auto" || supportedLanguageTags?.contains(sourceLanguage) != false
+    }
     var status by rememberSaveable { mutableStateOf("") }
     var busy by rememberSaveable { mutableStateOf(false) }
 
@@ -251,10 +263,56 @@ fun TranslationSettingsPage(
                     }
                 }
 
+                when (selectedProviderId) {
+                    AzureTranslatorProvider.PROVIDER_ID -> {
+                        Text(
+                            "Azure Translator F0 当前官方免费额度为每月 200 万字符；使用前需要在 Azure 创建 Translator 资源并填写密钥。区域型资源还需在请求头 JSON 中填写 Ocp-Apim-Subscription-Region。文章文本会发送到微软服务。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    MyMemoryTranslationProvider.PROVIDER_ID -> {
+                        Text(
+                            "MyMemory 无需 API Key。匿名额度为每天 5,000 字符，单次查询最多 500 UTF-8 字节；服务不支持自动检测源语言。它是公共翻译记忆服务，不保证稳定性，建议用于短文本和试用，长文章或自动翻译容易耗尽额度。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Button(
+                            enabled = !busy && sourceLanguageSupported && targetLanguageSupported,
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    status = "正在测试 MyMemory（会消耗每日免费额度）…"
+                                    try {
+                                        val result = viewModel.testProvider(
+                                            MyMemoryTranslationProvider.PROVIDER_ID,
+                                            sourceLanguage,
+                                            targetLanguage,
+                                        )
+                                        status = "MyMemory 测试成功：" + result
+                                    } catch (error: Throwable) {
+                                        status = "MyMemory 测试失败：" + (error.message ?: "未知错误")
+                                    } finally {
+                                        busy = false
+                                    }
+                                }
+                            },
+                        ) {
+                            if (busy) CircularProgressIndicator()
+                            else Text("测试 MyMemory（消耗额度）")
+                        }
+                    }
+                }
+
                 if (selectedProvider?.capabilities?.supportsCustomConfiguration == true) {
-                Text("自定义 API", style = MaterialTheme.typography.titleMedium)
+                val isAzureTranslator = selectedProviderId == AzureTranslatorProvider.PROVIDER_ID
+                Text(if (isAzureTranslator) "Azure Translator 配置" else "自定义 API", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "使用 API 时，文章文本会发送给你填写的服务。API Key 默认作为 Bearer Token 发送；配置密钥时只允许 HTTPS 地址，密钥和请求头使用 Android Keystore 加密保存。",
+                    if (isAzureTranslator) {
+                        "填入 Azure 资源的 Endpoint 和订阅密钥。单服务 Global 资源通常不需要区域 Header；区域型或多服务资源需要在下方 Header JSON 中填写区域。密钥与 Header 使用 Android Keystore 加密保存。"
+                    } else {
+                        "使用 API 时，文章文本会发送给你填写的服务。API Key 默认作为 Bearer Token 发送；配置密钥时只允许 HTTPS 地址，密钥和请求头使用 Android Keystore 加密保存。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -264,7 +322,12 @@ fun TranslationSettingsPage(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     label = { Text("API Endpoint") },
-                    placeholder = { Text("https://example.com/v1/chat/completions") },
+                    placeholder = {
+                        Text(
+                            if (isAzureTranslator) AzureTranslatorProvider.DEFAULT_ENDPOINT
+                            else "https://example.com/v1/chat/completions"
+                        )
+                    },
                 )
                 OutlinedTextField(
                     value = apiKey,
@@ -272,15 +335,17 @@ fun TranslationSettingsPage(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
-                    label = { Text("API Key（可选）") },
+                    label = { Text(if (isAzureTranslator) "Azure Subscription Key（必填）" else "API Key（可选）") },
                 )
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("模型名称（可选）") },
-                )
+                if (!isAzureTranslator) {
+                    OutlinedTextField(
+                        value = model,
+                        onValueChange = { model = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("模型名称（可选）") },
+                    )
+                }
                 OutlinedTextField(
                     value = timeoutSecondsText,
                     onValueChange = { timeoutSecondsText = it },
@@ -296,30 +361,37 @@ fun TranslationSettingsPage(
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 5,
-                    label = { Text("请求头 JSON") },
-                    placeholder = { Text("""{"Authorization":"Bearer {{apiKey}}"}""") },
+                    label = { Text(if (isAzureTranslator) "附加请求头 JSON（区域资源填写 Region）" else "请求头 JSON") },
+                    placeholder = {
+                        Text(
+                            if (isAzureTranslator) """{"Ocp-Apim-Subscription-Region":"eastasia"}"""
+                            else """{"Authorization":"Bearer {{apiKey}}"}"""
+                        )
+                    },
                 )
-                OutlinedTextField(
-                    value = requestTemplate,
-                    onValueChange = { requestTemplate = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 6,
-                    maxLines = 12,
-                    label = { Text("请求 JSON 模板") },
-                )
-                Text(
-                    "可用占位符：{{text}}、{{sourceLanguage}}、{{targetLanguage}}、{{model}}。占位符放在 JSON 字符串值中，内容会自动转义。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedTextField(
-                    value = responsePath,
-                    onValueChange = { responsePath = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("响应文本 JSON 路径") },
-                    placeholder = { Text("choices.0.message.content") },
-                )
+                if (!isAzureTranslator) {
+                    OutlinedTextField(
+                        value = requestTemplate,
+                        onValueChange = { requestTemplate = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 6,
+                        maxLines = 12,
+                        label = { Text("请求 JSON 模板") },
+                    )
+                    Text(
+                        "可用占位符：{{text}}、{{sourceLanguage}}、{{targetLanguage}}、{{model}}。占位符放在 JSON 字符串值中，内容会自动转义。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = responsePath,
+                        onValueChange = { responsePath = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("响应文本 JSON 路径") },
+                        placeholder = { Text("choices.0.message.content") },
+                    )
+                }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
@@ -367,7 +439,7 @@ fun TranslationSettingsPage(
                 LanguagePicker(
                     label = "原文语言",
                     selectedTag = sourceLanguage,
-                    includeAuto = true,
+                    includeAuto = !requiresExplicitSourceLanguage,
                     languages = availableLanguages,
                     onSelected = {
                         sourceLanguage = it
@@ -375,13 +447,21 @@ fun TranslationSettingsPage(
                     },
                 )
                 Text(
-                    "自动检测适合大多数文章；也可以手动指定原文语言。目标语言会用于文章正文和标题。",
+                    if (requiresExplicitSourceLanguage) {
+                        "MyMemory 不支持自动识别原文语言，请选择文章的实际源语言。目标语言用于文章正文和标题。"
+                    } else {
+                        "自动检测适合大多数文章；也可以手动指定原文语言。目标语言会用于文章正文和标题。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (!sourceLanguageSupported) {
                     Text(
-                        "当前引擎不支持所选源语言，请改为自动检测或选择可用语言。",
+                        if (requiresExplicitSourceLanguage && sourceLanguage == "auto") {
+                            "当前引擎不支持自动检测，请手动选择原文语言。"
+                        } else {
+                            "当前引擎不支持所选源语言，请选择可用语言。"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )

@@ -68,6 +68,17 @@ class TranslationSettingsViewModel @Inject constructor(
         ).translatedText
     }
 
+    suspend fun testProvider(
+        providerId: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+    ): String = translationService.translateTextUncached(
+        text = "This is a translation test from Read You.",
+        sourceLanguage = sourceLanguage,
+        targetLanguage = targetLanguage,
+        providerId = providerId,
+    ).translatedText
+
     fun refreshDownloadedModels() {
         viewModelScope.launch {
             _downloadedModels.value =
