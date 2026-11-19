@@ -27,6 +27,7 @@ class HttpJsonTranslationProvider @Inject constructor(
     private val configStore: TranslationApiConfigStore,
 ) : TranslationProvider {
     override val id: String = TranslationEngine.HTTP_JSON.id
+    override val displayName: String = "自定义 HTTP/JSON API"
     override val capabilities = TranslationProviderCapabilities(
         requiresNetwork = true,
         supportsBatching = true,
