@@ -10,13 +10,15 @@ import kotlinx.coroutines.launch
 import me.ash.reader.infrastructure.translation.TranslationApiConfiguration
 import me.ash.reader.infrastructure.translation.TranslationEngine
 import me.ash.reader.infrastructure.translation.TranslationService
+import me.ash.reader.infrastructure.translation.TranslationProviderDescriptor
 
 @HiltViewModel
 class TranslationSettingsViewModel @Inject constructor(
     private val translationService: TranslationService,
 ) : ViewModel() {
-    private val _selectedEngine = MutableStateFlow(translationService.selectedEngine())
-    val selectedEngine = _selectedEngine.asStateFlow()
+    private val _selectedProviderId = MutableStateFlow(translationService.selectedProviderId())
+    val selectedProviderId = _selectedProviderId.asStateFlow()
+    val availableProviders: List<TranslationProviderDescriptor> = translationService.availableProviders()
 
     private val _downloadedModels = MutableStateFlow<List<String>>(emptyList())
     val downloadedModels = _downloadedModels.asStateFlow()
@@ -27,32 +29,35 @@ class TranslationSettingsViewModel @Inject constructor(
 
     fun saveSourceLanguage(languageTag: String) = translationService.setSourceLanguage(languageTag)
 
-    fun loadApiConfiguration(): TranslationApiConfiguration? =
-        translationService.loadApiConfiguration()
+    fun loadApiConfiguration(providerId: String = _selectedProviderId.value): TranslationApiConfiguration? =
+        translationService.loadApiConfiguration(providerId)
 
-    fun selectEngine(engine: TranslationEngine) {
-        translationService.selectEngine(engine)
-        _selectedEngine.value = engine
+    fun selectProvider(providerId: String) {
+        translationService.selectProvider(providerId)
+        _selectedProviderId.value = providerId
     }
+
+    fun selectEngine(engine: TranslationEngine) = selectProvider(engine.id)
 
     fun saveTargetLanguage(languageTag: String) {
         translationService.setTargetLanguage(languageTag)
     }
 
-    fun saveApiConfiguration(configuration: TranslationApiConfiguration) {
-        translationService.saveApiConfiguration(configuration)
+    fun saveApiConfiguration(configuration: TranslationApiConfiguration, providerId: String = _selectedProviderId.value) {
+        translationService.saveApiConfiguration(configuration, providerId)
     }
 
     suspend fun testApi(
         configuration: TranslationApiConfiguration,
         targetLanguage: String,
+        providerId: String = _selectedProviderId.value,
     ): String {
-        translationService.saveApiConfiguration(configuration)
+        translationService.saveApiConfiguration(configuration, providerId)
         return translationService.translateText(
             text = "This is a translation test from Read You.",
             sourceLanguage = "en",
             targetLanguage = targetLanguage,
-            engine = TranslationEngine.HTTP_JSON,
+            providerId = providerId,
         ).translatedText
     }
 
