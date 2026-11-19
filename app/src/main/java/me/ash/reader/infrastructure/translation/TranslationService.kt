@@ -82,6 +82,27 @@ class TranslationService @Inject constructor(
         return response
     }
 
+    /**
+     * Calls the selected provider directly without reading or writing the translation cache.
+     * API diagnostics must reach the endpoint even when the test sentence was translated before.
+     */
+    suspend fun translateTextUncached(
+        text: String,
+        targetLanguage: String,
+        sourceLanguage: String? = null,
+        providerId: String,
+    ): TranslationResponse {
+        val provider = providerFor(providerId)
+        if (text.isBlank()) return TranslationResponse(text, sourceLanguage, provider.id)
+        return provider.translate(
+            TranslationRequest(
+                text = text,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+            )
+        )
+    }
+
     suspend fun translateHtml(
         html: String,
         targetLanguage: String,

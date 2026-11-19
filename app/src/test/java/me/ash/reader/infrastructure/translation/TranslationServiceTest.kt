@@ -130,6 +130,28 @@ class TranslationServiceTest {
         assertEquals(1, values.size)
     }
 
+
+    @Test
+    fun uncachedTranslationAlwaysCallsProviderAndDoesNotTouchTranslationCache() = runBlocking {
+        val provider = CountingProvider("provider_uncached")
+        val registry = TranslationProviderRegistry(setOf(provider))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        whenever(cache.get(Mockito.anyString())).thenReturn("stale cached translation")
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        val service = TranslationService(registry, cache, configStore)
+
+        val result = service.translateTextUncached(
+            text = "This is a translation test from Read You.",
+            sourceLanguage = "en",
+            targetLanguage = "zh-CN",
+            providerId = provider.id,
+        )
+
+        assertEquals("translated:This is a translation test from Read You.", result.translatedText)
+        assertEquals(1, provider.requestCount)
+        Mockito.verifyNoInteractions(cache)
+    }
+
     @Test
     fun htmlTranslationLeavesCodePreScriptAndExplicitNoTranslateContentUntouched() = runBlocking {
         val provider = CountingProvider("provider_html")

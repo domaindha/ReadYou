@@ -60,7 +60,7 @@ class TranslationSettingsViewModel @Inject constructor(
         providerId: String = _selectedProviderId.value,
     ): String {
         translationService.saveApiConfiguration(configuration, providerId)
-        return translationService.translateText(
+        return translationService.translateTextUncached(
             text = "This is a translation test from Read You.",
             sourceLanguage = "en",
             targetLanguage = targetLanguage,
