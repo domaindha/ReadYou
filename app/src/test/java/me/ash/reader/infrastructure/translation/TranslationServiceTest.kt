@@ -33,6 +33,67 @@ class TranslationServiceTest {
 
 
     @Test
+    fun successfulTranslationIsStoredAndReusedFromCache() = runBlocking {
+        val provider = CountingProvider("provider_cached")
+        val registry = TranslationProviderRegistry(setOf(provider))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        val values = mutableMapOf<String, String>()
+        Mockito.doAnswer { invocation ->
+            values[invocation.getArgument<String>(0)]
+        }.`when`(cache).get(Mockito.anyString())
+        Mockito.doAnswer { invocation ->
+            values[invocation.getArgument<String>(0)] = invocation.getArgument(1)
+            null
+        }.`when`(cache).put(Mockito.anyString(), Mockito.anyString())
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        whenever(configStore.loadConfiguration(provider.id)).thenReturn(
+            testConfiguration(endpoint = "https://cache.example/translate")
+        )
+        val service = TranslationService(registry, cache, configStore)
+
+        val first = service.translateText("hello", "zh-CN", "en", providerId = provider.id)
+        val second = service.translateText("hello", "zh-CN", "en", providerId = provider.id)
+
+        assertEquals("translated:hello", first.translatedText)
+        assertEquals(first.translatedText, second.translatedText)
+        assertEquals("A repeated translation should be served from cache.", 1, provider.requestCount)
+        assertEquals(1, values.size)
+    }
+
+    @Test
+    fun htmlTranslationLeavesCodePreScriptAndExplicitNoTranslateContentUntouched() = runBlocking {
+        val provider = CountingProvider("provider_html")
+        val registry = TranslationProviderRegistry(setOf(provider))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        whenever(cache.get(Mockito.anyString())).thenReturn(null)
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        val service = TranslationService(registry, cache, configStore)
+
+        val translated = service.translateHtml(
+            html = """
+                <p>Hello <strong>world</strong></p>
+                <pre>fun main() = Unit</pre>
+                <p>Keep <code>sourceCode()</code> intact</p>
+                <p class="notranslate">Do not translate this</p>
+                <script>const secret = "unchanged";</script>
+                <style>.sample { display: none; }</style>
+            """.trimIndent(),
+            targetLanguage = "zh-CN",
+            providerId = provider.id,
+            sourceLanguage = "en",
+        )
+        val document = Jsoup.parseBodyFragment(translated)
+
+        assertEquals("translated:Hello translated:world", document.selectFirst("p")?.text())
+        assertEquals("fun main() = Unit", document.selectFirst("pre")?.text())
+        assertEquals("sourceCode()", document.selectFirst("code")?.text())
+        assertEquals("Do not translate this", document.selectFirst(".notranslate")?.text())
+        assertEquals("const secret = \"unchanged\";", document.selectFirst("script")?.data())
+        assertEquals(".sample { display: none; }", document.selectFirst("style")?.data())
+        assertEquals(3, provider.requestCount)
+    }
+
+    @Test
     fun cacheKeysAreIsolatedByProviderAndProviderConfigurationRevision() = runBlocking {
         val providerA = CountingProvider("provider_a")
         val providerB = CountingProvider("provider_b")
