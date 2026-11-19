@@ -268,8 +268,6 @@ fun TranslationSettingsPage(
 
                 }
 
-                if (selectedProvider?.capabilities?.supportsModelManagement == true) {
-                Text("本地语言模型", style = MaterialTheme.typography.titleMedium)
                 Text("源语言", style = MaterialTheme.typography.titleMedium)
                 LanguagePicker(
                     label = "原文语言",
@@ -285,6 +283,9 @@ fun TranslationSettingsPage(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                if (selectedProvider?.capabilities?.supportsModelManagement == true) {
+                Text("本地语言模型", style = MaterialTheme.typography.titleMedium)
                 Button(
                     enabled = !busy,
                     onClick = {
