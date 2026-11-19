@@ -102,20 +102,24 @@ class TranslationService @Inject constructor(
     }
 
     suspend fun downloadOnDeviceModel(sourceLanguage: String, targetLanguage: String) =
-        onDeviceProvider().downloadModel(sourceLanguage, targetLanguage)
+        modelManager().downloadModel(sourceLanguage, targetLanguage)
 
     suspend fun getDownloadedOnDeviceModels(): List<String> =
-        onDeviceProvider().downloadedModels()
+        modelManager().downloadedModels()
 
     suspend fun deleteOnDeviceModel(languageTag: String) =
-        onDeviceProvider().deleteModel(languageTag)
+        modelManager().deleteModel(languageTag)
 
     suspend fun clearTranslationCache() = cache.clear()
 
-    fun saveApiConfiguration(configuration: TranslationApiConfiguration) =
-        configStore.saveConfiguration(configuration)
+    fun saveApiConfiguration(
+        configuration: TranslationApiConfiguration,
+        providerId: String = TranslationEngine.HTTP_JSON.id,
+    ) = configStore.saveConfiguration(configuration, providerId)
 
-    fun loadApiConfiguration(): TranslationApiConfiguration? = configStore.loadConfiguration()
+    fun loadApiConfiguration(
+        providerId: String = TranslationEngine.HTTP_JSON.id,
+    ): TranslationApiConfiguration? = configStore.loadConfiguration(providerId)
 
     private suspend fun translateSegments(
         segments: List<String>,
@@ -284,8 +288,8 @@ class TranslationService @Inject constructor(
     private fun providerFor(engine: TranslationEngine): TranslationProvider =
         providerRegistry.requireProvider(engine.id)
 
-    private fun onDeviceProvider(): MlKitTranslationProvider =
-        providerRegistry.requireProvider(TranslationEngine.ON_DEVICE.id) as? MlKitTranslationProvider
+    private fun modelManager(): TranslationModelManager =
+        providerRegistry.requireProvider(TranslationEngine.ON_DEVICE.id) as? TranslationModelManager
             ?: throw IllegalStateException("The registered on-device provider does not support model management.")
 
     private fun collectTranslatableTextNodes(element: Element, result: MutableList<TextNode>) {
