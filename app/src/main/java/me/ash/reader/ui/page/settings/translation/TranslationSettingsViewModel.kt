@@ -23,6 +23,11 @@ class TranslationSettingsViewModel @Inject constructor(
     private val _downloadedModels = MutableStateFlow<List<String>>(emptyList())
     val downloadedModels = _downloadedModels.asStateFlow()
 
+    fun isBilingualReadingEnabled(): Boolean = translationService.isBilingualReadingEnabled()
+
+    fun setBilingualReadingEnabled(enabled: Boolean) =
+        translationService.setBilingualReadingEnabled(enabled)
+
     fun selectedTargetLanguage(): String = translationService.targetLanguage()
 
     fun selectedSourceLanguage(): String = translationService.sourceLanguage()

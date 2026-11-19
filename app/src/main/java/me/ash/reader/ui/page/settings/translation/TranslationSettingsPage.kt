@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -64,6 +65,9 @@ fun TranslationSettingsPage(
 
     var targetLanguage by rememberSaveable {
         mutableStateOf(viewModel.selectedTargetLanguage())
+    }
+    var bilingualReading by rememberSaveable {
+        mutableStateOf(viewModel.isBilingualReadingEnabled())
     }
     var endpoint by rememberSaveable(selectedProviderId) { mutableStateOf(initialConfig?.endpoint.orEmpty()) }
     // Do not place API credentials in Android saved-instance-state bundles.
@@ -142,6 +146,27 @@ fun TranslationSettingsPage(
                             .onFailure { status = it.message ?: "保存失败" }
                     }
                 ) { Text("保存目标语言") }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("双语对照阅读", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "翻译后同时显示原文和译文，原文在前、译文在后。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = bilingualReading,
+                        onCheckedChange = {
+                            bilingualReading = it
+                            viewModel.setBilingualReadingEnabled(it)
+                        },
+                    )
+                }
 
                 Text("翻译引擎", style = MaterialTheme.typography.titleMedium)
                 providers.forEach { provider ->

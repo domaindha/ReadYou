@@ -110,6 +110,13 @@ class TranslationApiConfigStore @Inject constructor(
         preferences.edit().putString(KEY_PROVIDER, providerId.trim()).apply()
     }
 
+    fun isBilingualReadingEnabled(): Boolean =
+        preferences.getBoolean(KEY_BILINGUAL_READING, false)
+
+    fun setBilingualReadingEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_BILINGUAL_READING, enabled).apply()
+    }
+
     fun isAutoTranslationEnabled(feedId: String): Boolean {
         require(feedId.isNotBlank()) { "Feed ID is required." }
         return preferences.getBoolean(autoTranslationKey(feedId), false)
@@ -180,5 +187,6 @@ class TranslationApiConfigStore @Inject constructor(
         const val KEY_PROVIDER = "selected_provider"
         const val KEY_TARGET_LANGUAGE = "target_language"
         const val KEY_SOURCE_LANGUAGE = "source_language"
+        const val KEY_BILINGUAL_READING = "bilingual_reading_enabled"
     }
 }

@@ -319,6 +319,7 @@ constructor(
                             translatedTitle = null,
                             translatedContent = null,
                             isTranslated = false,
+                            isBilingual = false,
                             isTranslating = false,
                             translationError = null,
                         )
@@ -451,7 +452,12 @@ constructor(
         }
 
         if (state.translatedContent != null) {
-            _readerState.update { it.copy(isTranslated = true) }
+            _readerState.update {
+                it.copy(
+                    isTranslated = true,
+                    isBilingual = translationService.isBilingualReadingEnabled(),
+                )
+            }
             return
         }
 
@@ -494,6 +500,7 @@ constructor(
                         translatedTitle = translatedTitle,
                         translatedContent = translatedContent,
                         isTranslated = true,
+                        isBilingual = translationService.isBilingualReadingEnabled(),
                         isTranslating = false,
                         translationError = null,
                     )
@@ -600,6 +607,7 @@ data class ReaderState(
     val translatedTitle: String? = null,
     val translatedContent: String? = null,
     val isTranslated: Boolean = false,
+    val isBilingual: Boolean = false,
     val isTranslating: Boolean = false,
     val translationError: String? = null,
     val content: ContentState = Loading,

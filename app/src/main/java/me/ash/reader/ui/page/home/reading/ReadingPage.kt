@@ -58,6 +58,19 @@ import me.ash.reader.ui.page.home.reading.tts.TtsButton
 private const val UPWARD = 1
 private const val DOWNWARD = -1
 
+private fun buildBilingualHtml(original: String, translated: String): String =
+    """
+    <section class="ry-bilingual-original">
+      <h3>原文</h3>
+      $original
+    </section>
+    <hr />
+    <section class="ry-bilingual-translation">
+      <h3>译文</h3>
+      $translated
+    </section>
+    """.trimIndent()
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterialApi::class)
 @Composable
 fun ReadingPage(
@@ -257,9 +270,22 @@ fun ReadingPage(
                                                     enabled = isPullToSwitchArticleEnabled,
                                                 ),
                                             contentPadding = paddings,
-                                            content = if (isTranslated) translatedContent ?: content.text ?: "" else content.text ?: "",
+                                            content = when {
+                                                !isTranslated -> content.text.orEmpty()
+                                                isBilingual -> buildBilingualHtml(
+                                                    original = content.text.orEmpty(),
+                                                    translated = translatedContent.orEmpty(),
+                                                )
+                                                else -> translatedContent ?: content.text.orEmpty()
+                                            },
                                             feedName = feedName,
-                                            title = if (isTranslated) translatedTitle ?: title.orEmpty() else title.toString(),
+                                            title = when {
+                                                !isTranslated -> title.orEmpty()
+                                                isBilingual -> listOf(title.orEmpty(), translatedTitle.orEmpty())
+                                                    .filter { it.isNotBlank() }
+                                                    .joinToString("\n")
+                                                else -> translatedTitle ?: title.orEmpty()
+                                            },
                                             author = author,
                                             link = link,
                                             publishedDate = publishedDate,
