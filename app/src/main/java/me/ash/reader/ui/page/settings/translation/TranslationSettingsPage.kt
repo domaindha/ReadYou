@@ -187,6 +187,7 @@ fun TranslationSettingsPage(
                             viewModel.enableFreeCloudProvider(LingvaTranslationProvider.PROVIDER_ID)
                         }.onSuccess {
                             endpoint = LingvaTranslationProvider.DEFAULT_ENDPOINT
+                            sourceLanguage = "auto"
                             status = "Lingva 公共云端已配置并设为当前引擎"
                         }.onFailure {
                             status = it.message ?: "免费云端配置失败"
