@@ -75,15 +75,14 @@ class TranslationSettingsViewModel @Inject constructor(
     fun enableFreeCloudProvider(providerId: String) {
         when (providerId) {
             LingvaTranslationProvider.PROVIDER_ID -> {
-                if (translationService.loadApiConfiguration(providerId) == null) {
-                    translationService.saveApiConfiguration(
-                        TranslationApiConfiguration(
-                            endpoint = LingvaTranslationProvider.DEFAULT_ENDPOINT,
-                            timeoutSeconds = 45L,
-                        ),
-                        providerId,
-                    )
-                }
+                translationService.saveApiConfiguration(
+                    TranslationApiConfiguration(
+                        endpoint = LingvaTranslationProvider.DEFAULT_ENDPOINT,
+                        timeoutSeconds = 45L,
+                    ),
+                    providerId,
+                )
+                translationService.setSourceLanguage("auto")
             }
             else -> throw IllegalArgumentException("不支持的一键免费云端配置。")
         }
