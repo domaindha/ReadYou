@@ -147,8 +147,8 @@ constructor(
                 if (!enabled) {
                     synchronized(metadataQueueLock) {
                         metadataQueue.clear()
+                        // Let the cancelled worker clear its own Job reference in finally.
                         metadataQueueJob?.cancel()
-                        metadataQueueJob = null
                     }
                     _translatedArticleMetadata.value = emptyMap()
                 }
@@ -192,7 +192,10 @@ constructor(
             articles.distinctBy { it.article.id }.forEach { articleWithFeed ->
                 val articleId = articleWithFeed.article.id
                 val existing = _translatedArticleMetadata.value[articleId]
-                if (existing?.settingsSignature == signature || articleId in metadataQueue) {
+                if (
+                    (existing?.settingsSignature == signature && existing.error == null) ||
+                    articleId in metadataQueue
+                ) {
                     return@forEach
                 }
                 _translatedArticleMetadata.update {
