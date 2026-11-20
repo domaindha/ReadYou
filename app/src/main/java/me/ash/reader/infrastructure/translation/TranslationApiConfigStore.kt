@@ -14,6 +14,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Stores custom HTTP translation settings locally. The API key is encrypted with an
@@ -30,6 +33,20 @@ class TranslationApiConfigStore @Inject constructor(
         preferences.getBoolean(KEY_ARTICLE_METADATA_TRANSLATION_ENABLED, false)
     )
     val articleMetadataTranslationEnabled = _articleMetadataTranslationEnabled.asStateFlow()
+
+    private val _autoTranslationWifiOnly = MutableStateFlow(
+        preferences.getBoolean(KEY_AUTO_TRANSLATION_WIFI_ONLY, false)
+    )
+    val autoTranslationWifiOnly = _autoTranslationWifiOnly.asStateFlow()
+
+    private val _autoTranslationDailyLimit = MutableStateFlow(
+        preferences.getInt(KEY_AUTO_TRANSLATION_DAILY_LIMIT, DEFAULT_AUTO_TRANSLATION_DAILY_LIMIT)
+            .coerceIn(1, MAX_AUTO_TRANSLATION_DAILY_LIMIT)
+    )
+    val autoTranslationDailyLimit = _autoTranslationDailyLimit.asStateFlow()
+
+    private val _autoTranslationDailyUsage = MutableStateFlow(currentDailyArticleIds().size)
+    val autoTranslationDailyUsage = _autoTranslationDailyUsage.asStateFlow()
 
     fun loadConfiguration(providerId: String = TranslationEngine.HTTP_JSON.id): TranslationApiConfiguration? {
         val endpoint = preferences.getString(storageKey(KEY_ENDPOINT, providerId), null)?.trim().orEmpty()
@@ -129,6 +146,36 @@ class TranslationApiConfigStore @Inject constructor(
         _articleMetadataTranslationEnabled.value = enabled
     }
 
+    fun setAutoTranslationWifiOnly(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_AUTO_TRANSLATION_WIFI_ONLY, enabled).apply()
+        _autoTranslationWifiOnly.value = enabled
+    }
+
+    fun setAutoTranslationDailyLimit(limit: Int) {
+        require(limit in 1..MAX_AUTO_TRANSLATION_DAILY_LIMIT) {
+            "每日自动翻译上限必须在 1 到 $MAX_AUTO_TRANSLATION_DAILY_LIMIT 篇之间。"
+        }
+        preferences.edit().putInt(KEY_AUTO_TRANSLATION_DAILY_LIMIT, limit).apply()
+        _autoTranslationDailyLimit.value = limit
+    }
+
+    /** Reserve one daily slot per article ID shared by metadata and reader translation. */
+    @Synchronized
+    fun reserveAutomaticTranslationArticle(articleId: String): Boolean {
+        require(articleId.isNotBlank()) { "Article ID is required." }
+        val ids = currentDailyArticleIds().toMutableSet()
+        if (articleId in ids) return true
+        if (ids.size >= _autoTranslationDailyLimit.value) return false
+
+        ids += articleId
+        preferences.edit()
+            .putString(KEY_AUTO_TRANSLATION_DAILY_DATE, currentDayKey())
+            .putStringSet(KEY_AUTO_TRANSLATION_DAILY_ARTICLES, ids)
+            .apply()
+        _autoTranslationDailyUsage.value = ids.size
+        return true
+    }
+
     fun isAutoTranslationEnabled(feedId: String): Boolean {
         require(feedId.isNotBlank()) { "Feed ID is required." }
         return preferences.getBoolean(autoTranslationKey(feedId), false)
@@ -165,6 +212,17 @@ class TranslationApiConfigStore @Inject constructor(
 
     private fun groupAutoTranslationDefaultKey(groupId: String): String =
         "$KEY_AUTO_TRANSLATE_GROUP_PREFIX$groupId"
+
+    private fun currentDailyArticleIds(): Set<String> {
+        val storedDay = preferences.getString(KEY_AUTO_TRANSLATION_DAILY_DATE, null)
+        if (storedDay != currentDayKey()) return emptySet()
+        return preferences.getStringSet(KEY_AUTO_TRANSLATION_DAILY_ARTICLES, emptySet())
+            ?.toSet()
+            .orEmpty()
+    }
+
+    private fun currentDayKey(): String =
+        SimpleDateFormat("yyyyMMdd", Locale.ROOT).format(Date())
 
     private fun encrypt(plainText: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -220,5 +278,11 @@ class TranslationApiConfigStore @Inject constructor(
         const val KEY_BILINGUAL_READING = "bilingual_reading_enabled"
         const val KEY_ARTICLE_METADATA_TRANSLATION_ENABLED = "article_metadata_translation_enabled"
         const val KEY_AUTO_TRANSLATE_GROUP_PREFIX = "auto_translate_group_default_"
+        const val KEY_AUTO_TRANSLATION_WIFI_ONLY = "auto_translation_wifi_only"
+        const val KEY_AUTO_TRANSLATION_DAILY_LIMIT = "auto_translation_daily_limit"
+        const val KEY_AUTO_TRANSLATION_DAILY_DATE = "auto_translation_daily_date"
+        const val KEY_AUTO_TRANSLATION_DAILY_ARTICLES = "auto_translation_daily_articles"
+        const val DEFAULT_AUTO_TRANSLATION_DAILY_LIMIT = 20
+        const val MAX_AUTO_TRANSLATION_DAILY_LIMIT = 100
     }
 }

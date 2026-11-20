@@ -41,6 +41,15 @@ class TranslationSettingsViewModel @Inject constructor(
     fun isBilingualReadingEnabled(): Boolean = translationService.isBilingualReadingEnabled()
 
     val articleMetadataTranslationEnabled = translationService.articleMetadataTranslationEnabled
+    val autoTranslationWifiOnly = translationService.autoTranslationWifiOnly
+    val autoTranslationDailyLimit = translationService.autoTranslationDailyLimit
+    val autoTranslationDailyUsage = translationService.autoTranslationDailyUsage
+
+    fun setAutoTranslationWifiOnly(enabled: Boolean) =
+        translationService.setAutoTranslationWifiOnly(enabled)
+
+    fun setAutoTranslationDailyLimit(limit: Int) =
+        translationService.setAutoTranslationDailyLimit(limit)
 
     fun setArticleMetadataTranslationEnabled(enabled: Boolean) =
         translationService.setArticleMetadataTranslationEnabled(enabled)

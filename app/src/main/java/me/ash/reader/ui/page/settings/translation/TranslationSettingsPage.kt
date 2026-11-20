@@ -84,6 +84,12 @@ fun TranslationSettingsPage(
         mutableStateOf(viewModel.isBilingualReadingEnabled())
     }
     val articleMetadataTranslationEnabled by viewModel.articleMetadataTranslationEnabled.collectAsState()
+    val autoTranslationWifiOnly by viewModel.autoTranslationWifiOnly.collectAsState()
+    val autoTranslationDailyLimit by viewModel.autoTranslationDailyLimit.collectAsState()
+    val autoTranslationDailyUsage by viewModel.autoTranslationDailyUsage.collectAsState()
+    var dailyLimitText by rememberSaveable {
+        mutableStateOf(autoTranslationDailyLimit.toString())
+    }
     var endpoint by rememberSaveable(selectedProviderId) {
         mutableStateOf(
             initialConfig?.endpoint ?: when (selectedProviderId) {
@@ -231,6 +237,53 @@ fun TranslationSettingsPage(
                     )
                 }
 
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("自动翻译仅使用 Wi-Fi", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "只限制自动云端翻译；手动翻译和 ML Kit 离线翻译不受影响。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = autoTranslationWifiOnly,
+                        onCheckedChange = viewModel::setAutoTranslationWifiOnly,
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("自动翻译每日上限", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "默认每天 20 篇，当前已使用 $autoTranslationDailyUsage / $autoTranslationDailyLimit 篇。按文章去重，标题摘要和正文共用额度；手动翻译不占用额度。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = dailyLimitText,
+                        onValueChange = { dailyLimitText = it.filter(Char::isDigit).take(3) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        label = { Text("每日自动翻译文章数（1–100）") },
+                    )
+                    Button(
+                        enabled = !busy,
+                        onClick = {
+                            val limit = dailyLimitText.toIntOrNull()
+                            if (limit == null || limit !in 1..100) {
+                                status = "每日上限必须设置为 1 到 100 篇。"
+                            } else {
+                                viewModel.setAutoTranslationDailyLimit(limit)
+                                status = "自动翻译每日上限已保存"
+                            }
+                        },
+                    ) { Text("保存每日上限") }
+                }
+
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("翻译缓存", style = MaterialTheme.typography.titleMedium)
                     Text(
@@ -275,7 +328,7 @@ fun TranslationSettingsPage(
                                 buildString {
                                     append(
                                         when {
-                                            provider.capabilities.requiresNetwork -> "需要网络"
+                                            provider.capabilities.requiresNetwork -> "云端服务 · 文章文本会发送到对应服务"
                                             provider.capabilities.supportsModelManagement -> "设备端运行"
                                             else -> "无需网络"
                                         }
@@ -291,6 +344,14 @@ fun TranslationSettingsPage(
                             )
                         }
                     }
+                }
+
+                if (selectedProvider?.capabilities?.requiresNetwork == true) {
+                    Text(
+                        "第三方数据传输提示：当前引擎需要联网，文章标题、摘要和正文会发送到该引擎配置的服务端进行翻译。切换到 ML Kit 可在设备端处理文章文本。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
 
                 when (selectedProviderId) {

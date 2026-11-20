@@ -12,10 +12,17 @@ import me.ash.reader.infrastructure.translation.LibreTranslateProvider
 import me.ash.reader.infrastructure.translation.LingvaTranslationProvider
 import me.ash.reader.infrastructure.translation.MlKitTranslationProvider
 import me.ash.reader.infrastructure.translation.TranslationProvider
+import me.ash.reader.infrastructure.translation.AndroidTranslationNetworkPolicy
+import me.ash.reader.infrastructure.translation.TranslationNetworkPolicy
 
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class TranslationProviderModule {
+    @Binds
+    abstract fun bindTranslationNetworkPolicy(
+        policy: AndroidTranslationNetworkPolicy,
+    ): TranslationNetworkPolicy
+
     @Binds
     @IntoSet
     abstract fun bindOnDeviceProvider(provider: MlKitTranslationProvider): TranslationProvider

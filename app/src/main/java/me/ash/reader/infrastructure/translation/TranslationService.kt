@@ -4,6 +4,9 @@ import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.Mutex
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.TextNode
@@ -18,8 +21,12 @@ class TranslationService @Inject constructor(
     private val providerRegistry: TranslationProviderRegistry,
     private val cache: TranslationFileCache,
     private val configStore: TranslationApiConfigStore,
+    private val networkPolicy: TranslationNetworkPolicy = TranslationNetworkPolicy.ALLOW_ALL,
 ) {
     private val inFlightLocks = KeyedTranslationMutex()
+    private val cloudRateLimiter = CloudTranslationRateLimiter()
+
+    val wifiConnectionChanges: Flow<Boolean> = networkPolicy.observeWifiConnection()
     fun selectedEngine(): TranslationEngine = configStore.selectedEngine()
 
     fun selectedProviderId(): String = configStore.selectedProviderId()
@@ -53,6 +60,32 @@ class TranslationService @Inject constructor(
 
     fun setGroupAutoTranslationDefault(groupId: String, enabled: Boolean) =
         configStore.setGroupAutoTranslationDefault(groupId, enabled)
+
+    val autoTranslationWifiOnly = configStore.autoTranslationWifiOnly
+    val autoTranslationDailyLimit = configStore.autoTranslationDailyLimit
+    val autoTranslationDailyUsage = configStore.autoTranslationDailyUsage
+
+    fun setAutoTranslationWifiOnly(enabled: Boolean) =
+        configStore.setAutoTranslationWifiOnly(enabled)
+
+    fun setAutoTranslationDailyLimit(limit: Int) =
+        configStore.setAutoTranslationDailyLimit(limit)
+
+    /** Returns a reason when automatic translation must be deferred. Manual translation remains available. */
+    fun reserveAutomaticTranslationSlot(articleId: String): String? {
+        val provider = providerFor(configStore.selectedProviderId())
+        if (
+            configStore.autoTranslationWifiOnly.value &&
+            provider.capabilities.requiresNetwork &&
+            !networkPolicy.isWifiConnected()
+        ) {
+            return "自动翻译已暂停：当前设置为仅 Wi-Fi，连接 Wi-Fi 后即可继续。"
+        }
+        if (!configStore.reserveAutomaticTranslationArticle(articleId)) {
+            return "已达到今天的自动翻译篇数上限（${configStore.autoTranslationDailyLimit.value} 篇）。手动翻译不受限制。"
+        }
+        return null
+    }
 
     fun targetLanguage(): String = configStore.targetLanguage()
 
@@ -103,6 +136,7 @@ class TranslationService @Inject constructor(
     ): TranslationResponse {
         val provider = providerFor(providerId)
         if (text.isBlank()) return TranslationResponse(text, sourceLanguage, provider.id)
+        cloudRateLimiter.awaitIfNeeded(provider)
         return provider.translate(
             TranslationRequest(
                 text = text,
@@ -295,6 +329,7 @@ class TranslationService @Inject constructor(
                     }
 
                     val batchResult = try {
+                        cloudRateLimiter.awaitIfNeeded(provider)
                         provider.translate(
                             TranslationRequest(
                                 text = payload,
@@ -427,6 +462,7 @@ class TranslationService @Inject constructor(
         cache.get(cacheKey)?.let {
             return@withLock TranslationResponse(it, sourceLanguage, provider.id)
         }
+        cloudRateLimiter.awaitIfNeeded(provider)
         val response = provider.translate(
             TranslationRequest(
                 text = text,
@@ -552,6 +588,27 @@ private class KeyedTranslationMutex {
                     if (entry.references == 0) entries.remove(key)
                 }
             }
+        }
+    }
+}
+
+
+/** Starts no more than two cloud requests per second per provider. Cache hits are free. */
+internal class CloudTranslationRateLimiter(
+    private val minimumIntervalMillis: Long = 500L,
+) {
+    private val mutex = Mutex()
+    private val lastStartedAtNanos = mutableMapOf<String, Long>()
+
+    suspend fun awaitIfNeeded(provider: TranslationProvider) {
+        if (!provider.capabilities.requiresNetwork) return
+        mutex.withLock {
+            val now = System.nanoTime()
+            val previous = lastStartedAtNanos[provider.id] ?: 0L
+            val elapsedMillis = (now - previous) / 1_000_000L
+            val waitMillis = (minimumIntervalMillis - elapsedMillis).coerceAtLeast(0L)
+            if (waitMillis > 0L) delay(waitMillis)
+            lastStartedAtNanos[provider.id] = System.nanoTime()
         }
     }
 }

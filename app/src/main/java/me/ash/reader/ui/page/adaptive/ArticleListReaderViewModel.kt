@@ -152,10 +152,27 @@ constructor(
     private var metadataActiveArticleId: String? = null
     private var metadataActiveSettingsSignature: String? = null
     private var metadataVisibleArticleIds: Set<String> = emptySet()
+    private var metadataVisibleArticles: List<ArticleWithFeed> = emptyList()
 
     init {
         viewModelScope.launch {
             syncWorkerStatusFlow.debounce(500L).collect { _isSyncingFlow.value = it }
+        }
+        viewModelScope.launch {
+            translationService.wifiConnectionChanges.collect { isWifiConnected ->
+                if (isWifiConnected) {
+                    val articleId = _readerState.value.articleId
+                    if (articleId != null) maybeAutoTranslate(articleId)
+                }
+            }
+        }
+        viewModelScope.launch {
+            translationService.wifiConnectionChanges.collect { isWifiConnected ->
+                if (isWifiConnected) {
+                    val visible = synchronized(metadataQueueLock) { metadataVisibleArticles }
+                    if (visible.isNotEmpty()) translateVisibleArticleMetadata(visible)
+                }
+            }
         }
         viewModelScope.launch {
             translationService.articleMetadataTranslationEnabled.collect { enabled ->
@@ -163,6 +180,7 @@ constructor(
                     synchronized(metadataQueueLock) {
                         metadataQueue.clear()
                         metadataVisibleArticleIds = emptySet()
+                        metadataVisibleArticles = emptyList()
                         metadataActiveArticleId = null
                         metadataActiveSettingsSignature = null
                         // Let the cancelled worker clear its own Job reference in finally.
@@ -203,6 +221,7 @@ constructor(
         val visibleArticleIds = articlesToTranslate.map { it.article.id }.toSet()
         synchronized(metadataQueueLock) {
             metadataVisibleArticleIds = visibleArticleIds
+            metadataVisibleArticles = articlesToTranslate.distinctBy { it.article.id }
             // Drop queued work and UI translations for cards that have left the viewport.
             val noLongerVisible = metadataQueue.keys.filter { it !in visibleArticleIds }
             noLongerVisible.forEach { articleId -> metadataQueue.remove(articleId) }
@@ -295,6 +314,9 @@ constructor(
 
                     try {
                         currentCoroutineContext().ensureActive()
+                        translationService.reserveAutomaticTranslationSlot(articleId)?.let { reason ->
+                            throw AutomaticTranslationBlockedException(reason)
+                        }
                         if (currentArticleMetadataTranslationSignature() != signature) {
                             throw CancellationException("Translation settings changed.")
                         }
@@ -664,7 +686,7 @@ constructor(
         val feedId = currentFeed?.id ?: return
         if (_readerState.value.articleId != articleId) return
         if (_readerState.value.content is ReaderState.Loading || _readerState.value.content is ReaderState.Error) return
-        if (translationService.isAutoTranslationEnabled(feedId)) toggleTranslation()
+        if (translationService.isAutoTranslationEnabled(feedId)) toggleTranslation(isAutomatic = true)
     }
 
     fun updateReadStatus(isUnread: Boolean) {
@@ -699,7 +721,7 @@ constructor(
         }
     }
 
-    fun toggleTranslation() {
+    fun toggleTranslation(isAutomatic: Boolean = false) {
         val state = _readerState.value
         if (state.articleId == null || state.isTranslating) return
 
@@ -727,6 +749,16 @@ constructor(
         if (sourceContent.isBlank()) return
 
         val articleId = state.articleId
+        if (isAutomatic) {
+            val blockReason = translationService.reserveAutomaticTranslationSlot(articleId)
+            if (blockReason != null) {
+                _readerState.update { current ->
+                    if (current.articleId == articleId) current.copy(translationError = blockReason)
+                    else current
+                }
+                return
+            }
+        }
         val sourceTitle = state.title.orEmpty()
         val targetLanguage = translationService.targetLanguage()
         val sourceLanguage = translationService.sourceLanguage().takeUnless { it == "auto" }
@@ -862,6 +894,8 @@ constructor(
 }
 
 data class FlowUiState(val pagerData: PagerData, val nextFilterState: FilterState? = null)
+
+private class AutomaticTranslationBlockedException(message: String) : Exception(message)
 
 data class ArticleMetadataTranslation(
     val settingsSignature: String,
