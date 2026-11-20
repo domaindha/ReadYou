@@ -56,6 +56,35 @@ class TranslationService @Inject constructor(
     fun setAutoTranslationEnabled(feedId: String, enabled: Boolean) =
         configStore.setAutoTranslationEnabled(feedId, enabled)
 
+    fun feedProviderOverride(feedId: String): String? =
+        configStore.feedProviderOverride(feedId)
+
+    fun providerIdForFeed(feedId: String): String =
+        configStore.providerIdForFeed(feedId)
+
+    fun setFeedProviderOverride(feedId: String, providerId: String?) {
+        providerId?.takeIf { it.isNotBlank() }?.let(providerRegistry::requireProvider)
+        configStore.setFeedProviderOverride(feedId, providerId)
+    }
+
+    fun feedSourceLanguageOverride(feedId: String): String? =
+        configStore.feedSourceLanguageOverride(feedId)
+
+    fun sourceLanguageForFeed(feedId: String): String =
+        configStore.sourceLanguageForFeed(feedId)
+
+    fun setFeedSourceLanguageOverride(feedId: String, languageTag: String?) =
+        configStore.setFeedSourceLanguageOverride(feedId, languageTag)
+
+    fun isOnlyNewArticlesEnabled(feedId: String): Boolean =
+        configStore.isOnlyNewArticlesEnabled(feedId)
+
+    fun setOnlyNewArticlesEnabled(feedId: String, enabled: Boolean) =
+        configStore.setOnlyNewArticlesEnabled(feedId, enabled)
+
+    fun shouldAutomaticallyTranslateArticle(feedId: String, articleDateMillis: Long): Boolean =
+        configStore.shouldAutomaticallyTranslateArticle(feedId, articleDateMillis)
+
     fun groupAutoTranslationDefault(groupId: String): Boolean? =
         configStore.groupAutoTranslationDefault(groupId)
 
@@ -73,8 +102,9 @@ class TranslationService @Inject constructor(
         configStore.setAutoTranslationDailyLimit(limit)
 
     /** Returns a reason when automatic translation must be deferred. Manual translation remains available. */
-    fun reserveAutomaticTranslationSlot(articleId: String): String? {
-        val provider = providerFor(configStore.selectedProviderId())
+    fun reserveAutomaticTranslationSlot(articleId: String, feedId: String? = null): String? {
+        val providerId = feedId?.let(configStore::providerIdForFeed) ?: configStore.selectedProviderId()
+        val provider = providerFor(providerId)
         if (
             configStore.autoTranslationWifiOnly.value &&
             provider.capabilities.requiresNetwork &&
