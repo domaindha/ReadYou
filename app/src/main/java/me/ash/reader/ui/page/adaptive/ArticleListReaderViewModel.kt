@@ -8,6 +8,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.Date
+import java.security.MessageDigest
 import javax.inject.Inject
 import kotlin.collections.any
 import kotlinx.coroutines.CancellationException
@@ -157,11 +158,15 @@ constructor(
         }
     }
 
-    fun currentArticleMetadataTranslationSignature(): String = listOf(
-        translationService.selectedProviderId(),
-        translationService.sourceLanguage().takeUnless { it == "auto" }.orEmpty(),
-        translationService.targetLanguage(),
-    ).joinToString("\u0000")
+    fun currentArticleMetadataTranslationSignature(): String {
+        val providerId = translationService.selectedProviderId()
+        return listOf(
+            providerId,
+            translationService.providerCacheRevision(providerId),
+            translationService.sourceLanguage().takeUnless { it == "auto" }.orEmpty(),
+            translationService.targetLanguage(),
+        ).joinToString("\u0000")
+    }
 
     /**
      * Queue only visible RSS cards. The single worker keeps public APIs such as MyMemory
@@ -192,9 +197,17 @@ constructor(
 
             articles.distinctBy { it.article.id }.forEach { articleWithFeed ->
                 val articleId = articleWithFeed.article.id
+                val sourceContentSignature = articleMetadataSourceSignature(
+                    articleWithFeed.article.title,
+                    articleWithFeed.article.shortDescription,
+                )
                 val existing = _translatedArticleMetadata.value[articleId]
                 if (
-                    (existing?.settingsSignature == signature && existing.error == null) ||
+                    (
+                        existing?.settingsSignature == signature &&
+                        existing.sourceContentSignature == sourceContentSignature &&
+                        existing.error == null
+                    ) ||
                     articleId in metadataQueue
                 ) {
                     return@forEach
@@ -202,6 +215,7 @@ constructor(
                 _translatedArticleMetadata.update {
                     it + (articleId to ArticleMetadataTranslation(
                         settingsSignature = signature,
+                        sourceContentSignature = sourceContentSignature,
                         isTranslating = true,
                     ))
                 }
@@ -223,6 +237,10 @@ constructor(
                     } ?: break
                     val articleId = next.first
                     val article = next.second ?: continue
+                    val sourceContentSignature = articleMetadataSourceSignature(
+                        article.article.title,
+                        article.article.shortDescription,
+                    )
                     val providerId = translationService.selectedProviderId()
                     val targetLanguage = translationService.targetLanguage()
                     val sourceLanguage = translationService.sourceLanguage()
@@ -261,6 +279,7 @@ constructor(
                             _translatedArticleMetadata.update { current ->
                                 current + (articleId to ArticleMetadataTranslation(
                                     settingsSignature = signature,
+                                    sourceContentSignature = sourceContentSignature,
                                     translatedTitle = translatedTitle,
                                     translatedSummary = translatedSummary,
                                 ))
@@ -277,6 +296,7 @@ constructor(
                             _translatedArticleMetadata.update { current ->
                                 current + (articleId to ArticleMetadataTranslation(
                                     settingsSignature = signature,
+                                    sourceContentSignature = sourceContentSignature,
                                     error = error.message ?: "Translation failed",
                                 ))
                             }
@@ -786,11 +806,19 @@ data class FlowUiState(val pagerData: PagerData, val nextFilterState: FilterStat
 
 data class ArticleMetadataTranslation(
     val settingsSignature: String,
+    val sourceContentSignature: String,
     val translatedTitle: String? = null,
     val translatedSummary: String? = null,
     val isTranslating: Boolean = false,
     val error: String? = null,
 )
+
+internal fun articleMetadataSourceSignature(title: String, summary: String): String {
+    val material = "${title.length}:$title${summary.length}:$summary"
+    return MessageDigest.getInstance("SHA-256")
+        .digest(material.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+}
 
 data class ReadingUiState(
     val articleWithFeed: ArticleWithFeed? = null,

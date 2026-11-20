@@ -368,6 +368,9 @@ class TranslationService @Inject constructor(
         return fields.joinToString("") { "${it.length}:$it" }
     }
 
+    /** Stable provider configuration revision used by UI-level translated metadata state. */
+    fun providerCacheRevision(providerId: String): String = cacheRevision(providerId)
+
     private fun cacheRevision(providerId: String): String {
         if (providerId == TranslationEngine.ON_DEVICE.id) return PROVIDER_REVISION
         val config = configStore.loadConfiguration(providerId) ?: return "$providerId-unconfigured"
