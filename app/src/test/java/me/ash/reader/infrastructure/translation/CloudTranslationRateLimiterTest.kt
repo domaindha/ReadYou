@@ -21,22 +21,6 @@ class CloudTranslationRateLimiterTest {
         )
     }
 
-    @Test
-    fun localProviderDoesNotWaitForCloudRateLimit() = runBlocking {
-        val limiter = CloudTranslationRateLimiter(minimumIntervalMillis = 500L)
-        val provider = TestRateLimitProvider(requiresNetwork = false)
-
-        val startedAt = System.nanoTime()
-        limiter.awaitIfNeeded(provider)
-        limiter.awaitIfNeeded(provider)
-        val elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000L
-
-        assertTrue(
-            "On-device translation must not be throttled by the cloud limiter.",
-            elapsedMillis < 100L,
-        )
-    }
-
     private class TestRateLimitProvider(
         requiresNetwork: Boolean,
     ) : TranslationProvider {

@@ -599,7 +599,7 @@ internal class CloudTranslationRateLimiter(
     private val minimumIntervalMillis: Long = 500L,
 ) {
     private val providerLocks = ConcurrentHashMap<String, Mutex>()
-    private val lastStartedAtNanos = mutableMapOf<String, Long>()
+    private val lastStartedAtNanos = ConcurrentHashMap<String, Long>()
 
     suspend fun awaitIfNeeded(provider: TranslationProvider) {
         if (!provider.capabilities.requiresNetwork) return
