@@ -48,6 +48,54 @@ class CloudTranslationProviderTest {
     }
 
     @Test
+    fun libreTranslateParsesTranslatedTextAndReportsServerErrors() {
+        assertEquals(
+            "你好",
+            LibreTranslateProvider.parseTranslationResponse("""{"translatedText":"你好"}"""),
+        )
+        val error = assertThrows(IOException::class.java) {
+            LibreTranslateProvider.parseTranslationResponse("""{"error":"invalid API key"}""")
+        }
+        assertTrue(error.message.orEmpty().contains("invalid API key"))
+    }
+
+    @Test
+    fun libreTranslateBuildsTranslateEndpointForRootAndExistingPath() {
+        assertEquals(
+            "https://translate.example/translate",
+            LibreTranslateProvider.buildTranslateUrl("https://translate.example"),
+        )
+        assertEquals(
+            "https://translate.example/custom/translate",
+            LibreTranslateProvider.buildTranslateUrl("https://translate.example/custom/translate"),
+        )
+    }
+
+    @Test
+    fun lingvaParsesRestTranslationAndServerErrors() {
+        assertEquals(
+            "你好",
+            LingvaTranslationProvider.parseTranslationResponse("""{"translation":"你好"}"""),
+        )
+        val error = assertThrows(IOException::class.java) {
+            LingvaTranslationProvider.parseTranslationResponse("""{"error":"instance unavailable"}""")
+        }
+        assertTrue(error.message.orEmpty().contains("instance unavailable"))
+    }
+
+    @Test
+    fun lingvaGetFallbackEncodesTextAsOnePathSegment() {
+        val url = LingvaTranslationProvider.buildGetUrl(
+            "https://lingva.example",
+            "en",
+            "zh-CN",
+            "hello world/你好",
+        )
+        assertTrue(url.startsWith("https://lingva.example/api/v1/en/zh-CN/"))
+        assertTrue(url.contains("hello%20world%2F"))
+    }
+
+    @Test
     fun azureParsesTranslationAndDetectedLanguage() {
         val json = """[{"detectedLanguage":{"language":"en","score":1.0},"translations":[{"text":"你好","to":"zh-Hans"}]}]"""
         val result = AzureTranslatorProvider.parseAzureTranslationResponse(json)

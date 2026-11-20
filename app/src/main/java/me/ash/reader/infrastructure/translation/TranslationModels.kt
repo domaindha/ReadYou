@@ -8,7 +8,9 @@ enum class TranslationEngine(val id: String) {
     ON_DEVICE("on_device"),
     HTTP_JSON("http_json"),
     AZURE_TRANSLATOR("azure_translator"),
-    MYMEMORY("mymemory");
+    MYMEMORY("mymemory"),
+    LIBRE_TRANSLATE("libre_translate"),
+    LINGVA("lingva");
 
     companion object {
         fun fromId(id: String?): TranslationEngine =

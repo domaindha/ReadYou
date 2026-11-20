@@ -44,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import me.ash.reader.infrastructure.translation.AzureTranslatorProvider
 import me.ash.reader.infrastructure.translation.MyMemoryTranslationProvider
+import me.ash.reader.infrastructure.translation.LibreTranslateProvider
+import me.ash.reader.infrastructure.translation.LingvaTranslationProvider
 import me.ash.reader.infrastructure.translation.TranslationApiConfiguration
 import me.ash.reader.infrastructure.translation.TranslationEngine
 import me.ash.reader.infrastructure.translation.TranslationLanguages
@@ -84,9 +86,12 @@ fun TranslationSettingsPage(
     val articleMetadataTranslationEnabled by viewModel.articleMetadataTranslationEnabled.collectAsState()
     var endpoint by rememberSaveable(selectedProviderId) {
         mutableStateOf(
-            initialConfig?.endpoint ?: if (selectedProviderId == AzureTranslatorProvider.PROVIDER_ID) {
-                AzureTranslatorProvider.DEFAULT_ENDPOINT
-            } else ""
+            initialConfig?.endpoint ?: when (selectedProviderId) {
+                AzureTranslatorProvider.PROVIDER_ID -> AzureTranslatorProvider.DEFAULT_ENDPOINT
+                LibreTranslateProvider.PROVIDER_ID -> LibreTranslateProvider.DEFAULT_ENDPOINT
+                LingvaTranslationProvider.PROVIDER_ID -> LingvaTranslationProvider.DEFAULT_ENDPOINT
+                else -> ""
+            }
         )
     }
     // Do not place API credentials in Android saved-instance-state bundles.
@@ -289,6 +294,20 @@ fun TranslationSettingsPage(
                 }
 
                 when (selectedProviderId) {
+                    LibreTranslateProvider.PROVIDER_ID -> {
+                        Text(
+                            "LibreTranslate 基于开源 Argos Translate。可以填写自己的服务器地址；自托管通常无需 API Key，托管实例可能要求密钥或有使用额度。文章文本会发送到所填实例。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    LingvaTranslationProvider.PROVIDER_ID -> {
+                        Text(
+                            "Lingva 是实验性翻译前端，实例可用性和接口兼容性由运营者决定。应用优先使用 POST，旧实例不支持时回退到 GET。公共实例可能不稳定，文章文本会发送到所选实例。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     AzureTranslatorProvider.PROVIDER_ID -> {
                         Text(
                             "Azure Translator F0 当前官方免费额度为每月 200 万字符；使用前需要在 Azure 创建 Translator 资源并填写密钥。区域型资源还需在请求头 JSON 中填写 Ocp-Apim-Subscription-Region。文章文本会发送到微软服务。",
@@ -331,12 +350,28 @@ fun TranslationSettingsPage(
 
                 if (selectedProvider?.capabilities?.supportsCustomConfiguration == true) {
                 val isAzureTranslator = selectedProviderId == AzureTranslatorProvider.PROVIDER_ID
-                Text(if (isAzureTranslator) "Azure Translator 配置" else "自定义 API", style = MaterialTheme.typography.titleMedium)
+                val isLibreTranslate = selectedProviderId == LibreTranslateProvider.PROVIDER_ID
+                val isLingva = selectedProviderId == LingvaTranslationProvider.PROVIDER_ID
+                val isFixedProtocolProvider = isAzureTranslator || isLibreTranslate || isLingva
                 Text(
-                    if (isAzureTranslator) {
-                        "填入 Azure 资源的 Endpoint 和订阅密钥。单服务 Global 资源通常不需要区域 Header；区域型或多服务资源需要在下方 Header JSON 中填写区域。密钥与 Header 使用 Android Keystore 加密保存。"
-                    } else {
-                        "使用 API 时，文章文本会发送给你填写的服务。API Key 默认作为 Bearer Token 发送；配置密钥时只允许 HTTPS 地址，密钥和请求头使用 Android Keystore 加密保存。"
+                    when {
+                        isAzureTranslator -> "Azure Translator 配置"
+                        isLibreTranslate -> "LibreTranslate 实例配置"
+                        isLingva -> "Lingva 实例配置（实验性）"
+                        else -> "自定义 API"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    when {
+                        isAzureTranslator ->
+                            "填入 Azure 资源的 Endpoint 和订阅密钥。单服务 Global 资源通常不需要区域 Header；区域型或多服务资源需要在下方 Header JSON 中填写区域。密钥与 Header 使用 Android Keystore 加密保存。"
+                        isLibreTranslate ->
+                            "填写实例根地址或完整 /translate 地址。自建服务一般不需要 API Key；托管服务可在此填写密钥。密钥使用 Android Keystore 加密保存。"
+                        isLingva ->
+                            "填写 Lingva 实例根地址。无需 API Key；可以使用公共实例或自己的部署。此 Provider 处于实验阶段。"
+                        else ->
+                            "使用 API 时，文章文本会发送给你填写的服务。API Key 默认作为 Bearer Token 发送；配置密钥时只允许 HTTPS 地址，密钥和请求头使用 Android Keystore 加密保存。"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -349,20 +384,31 @@ fun TranslationSettingsPage(
                     label = { Text("API Endpoint") },
                     placeholder = {
                         Text(
-                            if (isAzureTranslator) AzureTranslatorProvider.DEFAULT_ENDPOINT
-                            else "https://example.com/v1/chat/completions"
+                            when {
+                                isAzureTranslator -> AzureTranslatorProvider.DEFAULT_ENDPOINT
+                                isLibreTranslate -> LibreTranslateProvider.DEFAULT_ENDPOINT
+                                isLingva -> LingvaTranslationProvider.DEFAULT_ENDPOINT
+                                else -> "https://example.com/v1/chat/completions"
+                            }
                         )
                     },
                 )
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    label = { Text(if (isAzureTranslator) "Azure Subscription Key（必填）" else "API Key（可选）") },
-                )
-                if (!isAzureTranslator) {
+                if (isAzureTranslator || isLibreTranslate) {
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = {
+                            Text(
+                                if (isAzureTranslator) "Azure Subscription Key（必填）"
+                                else "API Key（托管实例可能需要）"
+                            )
+                        },
+                    )
+                }
+                if (!isFixedProtocolProvider) {
                     OutlinedTextField(
                         value = model,
                         onValueChange = { model = it },
@@ -380,21 +426,38 @@ fun TranslationSettingsPage(
                     label = { Text("请求超时（秒，5–180）") },
                     supportingText = { Text("默认 45 秒，连接、读取和总请求时间均受此限制。") },
                 )
-                OutlinedTextField(
-                    value = headersText,
-                    onValueChange = { headersText = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                    maxLines = 5,
-                    label = { Text(if (isAzureTranslator) "附加请求头 JSON（区域资源填写 Region）" else "请求头 JSON") },
-                    placeholder = {
-                        Text(
-                            if (isAzureTranslator) """{"Ocp-Apim-Subscription-Region":"eastasia"}"""
-                            else """{"Authorization":"Bearer {{apiKey}}"}"""
-                        )
-                    },
-                )
-                if (!isAzureTranslator) {
+                if (!isFixedProtocolProvider) {
+                    OutlinedTextField(
+                        value = headersText,
+                        onValueChange = { headersText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 5,
+                        label = { Text("请求头 JSON") },
+                        placeholder = { Text("""{"Authorization":"Bearer {{apiKey}}"}""") },
+                    )
+                    OutlinedTextField(
+                        value = requestTemplate,
+                        onValueChange = { requestTemplate = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 6,
+                        maxLines = 12,
+                        label = { Text("请求 JSON 模板") },
+                    )
+                    Text(
+                        "可用占位符：{{text}}、{{sourceLanguage}}、{{targetLanguage}}、{{model}}。占位符放在 JSON 字符串值中，内容会自动转义。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = responsePath,
+                        onValueChange = { responsePath = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("响应文本 JSON 路径") },
+                        placeholder = { Text("choices.0.message.content") },
+                    )
+                }
                     OutlinedTextField(
                         value = requestTemplate,
                         onValueChange = { requestTemplate = it },

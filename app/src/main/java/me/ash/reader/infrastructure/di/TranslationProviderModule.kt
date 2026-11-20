@@ -8,6 +8,8 @@ import dagger.multibindings.IntoSet
 import me.ash.reader.infrastructure.translation.AzureTranslatorProvider
 import me.ash.reader.infrastructure.translation.HttpJsonTranslationProvider
 import me.ash.reader.infrastructure.translation.MyMemoryTranslationProvider
+import me.ash.reader.infrastructure.translation.LibreTranslateProvider
+import me.ash.reader.infrastructure.translation.LingvaTranslationProvider
 import me.ash.reader.infrastructure.translation.MlKitTranslationProvider
 import me.ash.reader.infrastructure.translation.TranslationProvider
 
@@ -29,4 +31,12 @@ abstract class TranslationProviderModule {
     @Binds
     @IntoSet
     abstract fun bindMyMemoryProvider(provider: MyMemoryTranslationProvider): TranslationProvider
+
+    @Binds
+    @IntoSet
+    abstract fun bindLibreTranslateProvider(provider: LibreTranslateProvider): TranslationProvider
+
+    @Binds
+    @IntoSet
+    abstract fun bindLingvaProvider(provider: LingvaTranslationProvider): TranslationProvider
 }
