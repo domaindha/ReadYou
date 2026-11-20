@@ -1,5 +1,9 @@
 name: "Build Commit"
-on: push
+on:
+    push:
+    pull_request:
+        branches:
+            - feature/article-translation
 
 # CI trigger commit after enabling Actions in the fork.
 jobs:
