@@ -196,9 +196,8 @@ fun ReadingPage(
                                     ))
                         },
                         label = "",
-                    ) {
-                        remember { it }
-                            .run {
+                    ) { animatedReaderState ->
+                        animatedReaderState.run {
                                 val state =
                                     rememberPullToLoadState(
                                         key = content,
