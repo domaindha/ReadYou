@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
 import me.ash.reader.domain.data.ArticlePagingListUseCase
 import me.ash.reader.domain.data.DiffMapHolder
 import me.ash.reader.domain.data.FilterState
@@ -213,6 +214,7 @@ constructor(
     private fun ensureMetadataQueueWorkerLocked() {
         if (metadataQueueJob?.isActive == true || metadataQueue.isEmpty()) return
         metadataQueueJob = viewModelScope.launch(ioDispatcher) {
+            val thisWorker = currentCoroutineContext()[Job]
             try {
                 while (true) {
                     val next = synchronized(metadataQueueLock) {
@@ -283,12 +285,15 @@ constructor(
                 }
             } finally {
                 synchronized(metadataQueueLock) {
-                    metadataQueueJob = null
-                    if (
-                        metadataQueue.isNotEmpty() &&
-                        translationService.articleMetadataTranslationEnabled.value
-                    ) {
-                        ensureMetadataQueueWorkerLocked()
+                    // A cancelled worker must not clear the reference to a newer worker.
+                    if (metadataQueueJob === thisWorker) {
+                        metadataQueueJob = null
+                        if (
+                            metadataQueue.isNotEmpty() &&
+                            translationService.articleMetadataTranslationEnabled.value
+                        ) {
+                            ensureMetadataQueueWorkerLocked()
+                        }
                     }
                 }
             }
