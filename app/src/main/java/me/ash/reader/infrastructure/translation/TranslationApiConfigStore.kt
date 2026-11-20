@@ -186,59 +186,6 @@ class TranslationApiConfigStore @Inject constructor(
         preferences.edit().putBoolean(autoTranslationKey(feedId), enabled).apply()
     }
 
-    fun feedProviderOverride(feedId: String): String? {
-        require(feedId.isNotBlank()) { "Feed ID is required." }
-        return preferences.getString(feedProviderOverrideKey(feedId), null)?.takeIf { it.isNotBlank() }
-    }
-
-    fun providerIdForFeed(feedId: String): String =
-        feedProviderOverride(feedId) ?: selectedProviderId()
-
-    fun setFeedProviderOverride(feedId: String, providerId: String?) {
-        require(feedId.isNotBlank()) { "Feed ID is required." }
-        preferences.edit().also { editor ->
-            if (providerId.isNullOrBlank()) editor.remove(feedProviderOverrideKey(feedId))
-            else editor.putString(feedProviderOverrideKey(feedId), providerId.trim())
-        }.apply()
-    }
-
-    fun feedSourceLanguageOverride(feedId: String): String? {
-        require(feedId.isNotBlank()) { "Feed ID is required." }
-        return preferences.getString(feedSourceLanguageOverrideKey(feedId), null)?.takeIf { it.isNotBlank() }
-    }
-
-    fun sourceLanguageForFeed(feedId: String): String =
-        feedSourceLanguageOverride(feedId) ?: sourceLanguage()
-
-    fun setFeedSourceLanguageOverride(feedId: String, languageTag: String?) {
-        require(feedId.isNotBlank()) { "Feed ID is required." }
-        preferences.edit().also { editor ->
-            if (languageTag.isNullOrBlank()) editor.remove(feedSourceLanguageOverrideKey(feedId))
-            else editor.putString(feedSourceLanguageOverrideKey(feedId), languageTag.trim())
-        }.apply()
-    }
-
-    fun isOnlyNewArticlesEnabled(feedId: String): Boolean {
-        require(feedId.isNotBlank()) { "Feed ID is required." }
-        return preferences.getBoolean(onlyNewArticlesKey(feedId), false)
-    }
-
-    fun setOnlyNewArticlesEnabled(feedId: String, enabled: Boolean) {
-        require(feedId.isNotBlank()) { "Feed ID is required." }
-        preferences.edit().also { editor ->
-            editor.putBoolean(onlyNewArticlesKey(feedId), enabled)
-            if (enabled) editor.putLong(onlyNewArticlesSinceKey(feedId), System.currentTimeMillis())
-            else editor.remove(onlyNewArticlesSinceKey(feedId))
-        }.apply()
-    }
-
-    /** Older articles remain available for manual translation but are skipped by automatic rules. */
-    fun shouldAutomaticallyTranslateArticle(feedId: String, articleDateMillis: Long): Boolean {
-        if (!isOnlyNewArticlesEnabled(feedId)) return true
-        val enabledAt = preferences.getLong(onlyNewArticlesSinceKey(feedId), Long.MAX_VALUE)
-        return articleDateMillis > enabledAt
-    }
-
     /**
      * Returns null when a group has no automatic-translation default configured.
      * A stored false is an explicit opt-out for future subscriptions in that group.
@@ -262,10 +209,6 @@ class TranslationApiConfigStore @Inject constructor(
         if (providerId == TranslationEngine.HTTP_JSON.id) key else "${providerId}_$key"
 
     private fun autoTranslationKey(feedId: String): String = "auto_translate_feed_$feedId"
-    private fun feedProviderOverrideKey(feedId: String): String = "translation_provider_feed_$feedId"
-    private fun feedSourceLanguageOverrideKey(feedId: String): String = "translation_source_language_feed_$feedId"
-    private fun onlyNewArticlesKey(feedId: String): String = "translation_only_new_feed_$feedId"
-    private fun onlyNewArticlesSinceKey(feedId: String): String = "translation_only_new_since_feed_$feedId"
 
     private fun groupAutoTranslationDefaultKey(groupId: String): String =
         "$KEY_AUTO_TRANSLATE_GROUP_PREFIX$groupId"

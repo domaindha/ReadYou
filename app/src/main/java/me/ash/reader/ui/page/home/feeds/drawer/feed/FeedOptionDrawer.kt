@@ -100,6 +100,10 @@ fun FeedOptionDrawer(
                     selectedParseFullContentPreset = feedOptionUiState.feed?.isFullContent ?: false,
                     selectedOpenInBrowserPreset = feedOptionUiState.feed?.isBrowser ?: false,
                     selectedAutoTranslatePreset = feedOptionUiState.isAutoTranslateEnabled,
+                    selectedOnlyNewArticlesPreset = feedOptionUiState.onlyNewArticles,
+                    feedProviderOverride = feedOptionUiState.feedProviderOverride,
+                    feedSourceLanguageOverride = feedOptionUiState.feedSourceLanguageOverride,
+                    translationProviders = feedOptionViewModel.translationProviders,
                     isMoveToGroup = true,
                     showGroup = feedOptionViewModel.rssService.get().moveSubscription,
                     showUnsubscribe = feedOptionViewModel.rssService.get().deleteSubscription,
@@ -117,6 +121,11 @@ fun FeedOptionDrawer(
                     autoTranslatePresetOnClick = {
                         feedOptionViewModel.changeAutoTranslationPreset()
                     },
+                    onlyNewArticlesPresetOnClick = {
+                        feedOptionViewModel.changeOnlyNewArticles()
+                    },
+                    onFeedProviderChange = feedOptionViewModel::changeFeedTranslationProvider,
+                    onFeedSourceLanguageChange = feedOptionViewModel::changeFeedSourceLanguage,
                     clearArticlesOnClick = {
                         feedOptionViewModel.showClearDialog()
                     },

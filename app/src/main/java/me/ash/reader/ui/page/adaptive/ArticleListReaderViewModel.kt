@@ -176,15 +176,12 @@ constructor(
         }
     }
 
-    fun currentArticleMetadataTranslationSignature(feedId: String? = null): String {
-        val providerId = feedId?.let(translationService::providerIdForFeed)
-            ?: translationService.selectedProviderId()
-        val sourceLanguage = feedId?.let(translationService::sourceLanguageForFeed)
-            ?: translationService.sourceLanguage()
+    fun currentArticleMetadataTranslationSignature(): String {
+        val providerId = translationService.selectedProviderId()
         return listOf(
             providerId,
             translationService.providerCacheRevision(providerId),
-            sourceLanguage.takeUnless { it == "auto" }.orEmpty(),
+            translationService.sourceLanguage().takeUnless { it == "auto" }.orEmpty(),
             translationService.targetLanguage(),
         ).joinToString("\u0000")
     }
@@ -196,19 +193,15 @@ constructor(
     fun translateVisibleArticleMetadata(articles: List<ArticleWithFeed>) {
         if (!translationService.articleMetadataTranslationEnabled.value) return
 
-        val providers = translationService.availableProviders().associateBy { it.id }
-        val articlesToTranslate = articles.distinctBy { it.article.id }.filter { articleWithFeed ->
-            val feedId = articleWithFeed.feed.id
-            val provider = providers[translationService.providerIdForFeed(feedId)]
-            val sourceLanguage = translationService.sourceLanguageForFeed(feedId)
-            translationService.shouldAutomaticallyTranslateArticle(
-                feedId,
-                articleWithFeed.article.date.time,
-            ) && !(
-                provider?.capabilities?.requiresExplicitSourceLanguage == true &&
-                    sourceLanguage == "auto"
-            )
-        }
+        val sourceLanguage = translationService.sourceLanguage()
+        val selectedProvider = translationService.availableProviders()
+            .firstOrNull { it.id == translationService.selectedProviderId() }
+        val canTranslate = !(
+            selectedProvider?.capabilities?.requiresExplicitSourceLanguage == true &&
+                sourceLanguage == "auto"
+        )
+        val articlesToTranslate = if (canTranslate) articles else emptyList()
+        val signature = currentArticleMetadataTranslationSignature()
         val visibleArticleIds = articlesToTranslate.map { it.article.id }.toSet()
         synchronized(metadataQueueLock) {
             metadataVisibleArticleIds = visibleArticleIds
@@ -223,13 +216,10 @@ constructor(
             // Cancel the in-flight request too; otherwise scrolling quickly can still spend
             // cloud quota on an article that is no longer visible.
             val activeArticleId = metadataActiveArticleId
-            val activeFeedId = metadataVisibleArticles
-                .firstOrNull { it.article.id == activeArticleId }?.feed?.id
             val activeMustRestart = activeArticleId?.takeIf {
                 it !in visibleArticleIds ||
                     (metadataActiveSettingsSignature != null &&
-                        activeFeedId != null &&
-                        metadataActiveSettingsSignature != currentArticleMetadataTranslationSignature(activeFeedId))
+                        metadataActiveSettingsSignature != signature)
             }
             if (activeMustRestart != null) {
                 metadataActiveArticleId = null
@@ -290,11 +280,16 @@ constructor(
                         article.article.title,
                         article.article.shortDescription,
                     )
-                    val providerId = translationService.providerIdForFeed(article.feed.id)
+                    val providerId = translationService.selectedProviderId()
                     val targetLanguage = translationService.targetLanguage()
-                    val sourceLanguage = translationService.sourceLanguageForFeed(article.feed.id)
+                    val sourceLanguage = translationService.sourceLanguage()
                         .takeUnless { it == "auto" }
-                    val signature = currentArticleMetadataTranslationSignature(article.feed.id)
+                    val signature = listOf(
+                        providerId,
+                        translationService.providerCacheRevision(providerId),
+                        sourceLanguage.orEmpty(),
+                        targetLanguage,
+                    ).joinToString("\u0000")
                     synchronized(metadataQueueLock) {
                         if (metadataActiveArticleId == articleId) {
                             metadataActiveSettingsSignature = signature
@@ -303,10 +298,10 @@ constructor(
 
                     try {
                         currentCoroutineContext().ensureActive()
-                        translationService.reserveAutomaticTranslationSlot(articleId, article.feed.id)?.let { reason ->
+                        translationService.reserveAutomaticTranslationSlot(articleId)?.let { reason ->
                             throw AutomaticTranslationBlockedException(reason)
                         }
-                        if (currentArticleMetadataTranslationSignature(article.feed.id) != signature) {
+                        if (currentArticleMetadataTranslationSignature() != signature) {
                             throw CancellationException("Translation settings changed.")
                         }
                         val translatedTitle = article.article.title
@@ -320,7 +315,7 @@ constructor(
                                 ).translatedText
                             }
                         currentCoroutineContext().ensureActive()
-                        if (currentArticleMetadataTranslationSignature(article.feed.id) != signature) {
+                        if (currentArticleMetadataTranslationSignature() != signature) {
                             throw CancellationException("Translation settings changed.")
                         }
                         val translatedSummary = article.article.shortDescription
@@ -339,7 +334,7 @@ constructor(
                                 metadataActiveArticleId == articleId &&
                                 articleId in metadataVisibleArticleIds &&
                                 translationService.articleMetadataTranslationEnabled.value &&
-                                currentArticleMetadataTranslationSignature(article.feed.id) == signature
+                                currentArticleMetadataTranslationSignature() == signature
                             ) {
                                 _translatedArticleMetadata.update { current ->
                                     current + (articleId to ArticleMetadataTranslation(
@@ -360,7 +355,7 @@ constructor(
                                 metadataActiveArticleId == articleId &&
                                 articleId in metadataVisibleArticleIds &&
                                 translationService.articleMetadataTranslationEnabled.value &&
-                                currentArticleMetadataTranslationSignature(article.feed.id) == signature
+                                currentArticleMetadataTranslationSignature() == signature
                             ) {
                                 _translatedArticleMetadata.update { current ->
                                     current + (articleId to ArticleMetadataTranslation(
@@ -692,11 +687,7 @@ constructor(
         if (state.articleId != articleId || state.isTranslating || state.isTranslated) return
         if (state.translatedContent != null && state.translationError == null) return
         if (state.content is ReaderState.Loading || state.content is ReaderState.Error) return
-        val articleDate = currentArticle?.date?.time ?: return
-        if (
-            translationService.isAutoTranslationEnabled(feedId) &&
-            translationService.shouldAutomaticallyTranslateArticle(feedId, articleDate)
-        ) {
+        if (translationService.isAutoTranslationEnabled(feedId)) {
             toggleTranslation(isAutomatic = true)
         }
     }
@@ -761,18 +752,8 @@ constructor(
         if (sourceContent.isBlank()) return
 
         val articleId = state.articleId
-        val feedId = currentFeed?.id ?: readingUiState.value.articleWithFeed?.feed?.id
-        val articleDate = currentArticle?.date?.time
-        if (
-            isAutomatic &&
-            feedId != null &&
-            articleDate != null &&
-            !translationService.shouldAutomaticallyTranslateArticle(feedId, articleDate)
-        ) {
-            return
-        }
         if (isAutomatic) {
-            val blockReason = translationService.reserveAutomaticTranslationSlot(articleId, feedId)
+            val blockReason = translationService.reserveAutomaticTranslationSlot(articleId)
             if (blockReason != null) {
                 _readerState.update { current ->
                     if (current.articleId == articleId) current.copy(translationError = blockReason)
@@ -783,10 +764,7 @@ constructor(
         }
         val sourceTitle = state.title.orEmpty()
         val targetLanguage = translationService.targetLanguage()
-        val providerId = feedId?.let(translationService::providerIdForFeed)
-            ?: translationService.selectedProviderId()
-        val sourceLanguage = (feedId?.let(translationService::sourceLanguageForFeed)
-            ?: translationService.sourceLanguage()).takeUnless { it == "auto" }
+        val sourceLanguage = translationService.sourceLanguage().takeUnless { it == "auto" }
 
         _readerState.update {
             it.copy(isTranslating = true, translationProgress = 0f, translationError = null)
@@ -794,6 +772,7 @@ constructor(
 
         translationJob = viewModelScope.launch {
             try {
+                val providerId = translationService.selectedProviderId()
                 val translatedContent = translationService.translateHtml(
                     html = sourceContent,
                     targetLanguage = targetLanguage,
