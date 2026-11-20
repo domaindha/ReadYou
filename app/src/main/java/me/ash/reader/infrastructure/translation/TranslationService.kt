@@ -4,6 +4,7 @@ import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.TextNode
 import org.jsoup.Jsoup
@@ -18,6 +19,7 @@ class TranslationService @Inject constructor(
     private val cache: TranslationFileCache,
     private val configStore: TranslationApiConfigStore,
 ) {
+    private val inFlightLocks = KeyedTranslationMutex()
     fun selectedEngine(): TranslationEngine = configStore.selectedEngine()
 
     fun selectedProviderId(): String = configStore.selectedProviderId()
@@ -80,17 +82,13 @@ class TranslationService @Inject constructor(
             targetLanguage,
             text,
         )
-        cache.get(key)?.let { return TranslationResponse(it, sourceLanguage, provider.id) }
-
-        val response = provider.translate(
-            TranslationRequest(
-                text = text,
-                sourceLanguage = sourceLanguage,
-                targetLanguage = targetLanguage,
-            )
+        return translateCached(
+            provider = provider,
+            cacheKey = key,
+            text = text,
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage,
         )
-        cache.put(key, response.translatedText)
-        return response
     }
 
     /**
@@ -194,6 +192,8 @@ class TranslationService @Inject constructor(
 
     suspend fun clearTranslationCache() = cache.clear()
 
+    suspend fun translationCacheStats(): TranslationCacheStats = cache.stats()
+
     fun saveApiConfiguration(
         configuration: TranslationApiConfiguration,
         providerId: String = TranslationEngine.HTTP_JSON.id,
@@ -238,20 +238,17 @@ class TranslationService @Inject constructor(
 
         suspend fun translateOne(segmentIndex: Int) {
             val segment = segments[segmentIndex]
-            val response = provider.translate(
-                TranslationRequest(
-                    text = segment,
-                    sourceLanguage = sourceLanguage,
-                    targetLanguage = targetLanguage,
-                )
+            val key = createCacheKey(
+                provider.id, revision, sourceLanguage, targetLanguage, segment
+            )
+            val response = translateCached(
+                provider = provider,
+                cacheKey = key,
+                text = segment,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
             )
             results[segmentIndex] = response.translatedText
-            cache.put(
-                createCacheKey(
-                    provider.id, revision, sourceLanguage, targetLanguage, segment
-                ),
-                response.translatedText,
-            )
             completedSegments++
             reportProgress()
         }
@@ -262,47 +259,74 @@ class TranslationService @Inject constructor(
         } else {
             // Bounded batches reduce request count without creating oversized prompts.
             for (batch in buildBatches(missingIndices, segments)) {
-                val markers = (0..batch.size).map(::batchMarker)
-                val payload = buildString {
-                    batch.forEachIndexed { index, segmentIndex ->
-                        append(markers[index])
-                        append(segments[segmentIndex])
-                    }
-                    append(markers.last())
-                }
-
-                val batchResult = try {
-                    provider.translate(
-                        TranslationRequest(
-                            text = payload,
-                            sourceLanguage = sourceLanguage,
-                            targetLanguage = targetLanguage,
+                val batchLockKey = createCacheKey(
+                    provider.id,
+                    revision,
+                    sourceLanguage,
+                    targetLanguage,
+                    "batch:${batch.joinToString("|") { segments[it] }}",
+                )
+                inFlightLocks.withLock(batchLockKey) {
+                    // Another reader may have filled this batch while this caller waited.
+                    val pendingIndices = mutableListOf<Int>()
+                    batch.forEach { segmentIndex ->
+                        val segmentKey = createCacheKey(
+                            provider.id, revision, sourceLanguage, targetLanguage,
+                            segments[segmentIndex],
                         )
-                    ).translatedText
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    null
-                }
-
-                val pieces = batchResult?.let { extractMarkedSegments(it, markers) }
-                if (pieces != null) {
-                    batch.forEachIndexed { index, segmentIndex ->
-                        val value = pieces[index]
-                        results[segmentIndex] = value
-                        cache.put(
-                            createCacheKey(
-                                provider.id, revision, sourceLanguage, targetLanguage,
-                                segments[segmentIndex],
-                            ),
-                            value,
-                        )
-                        completedSegments++
-                        reportProgress()
+                        val cached = cache.get(segmentKey)
+                        if (cached != null) {
+                            results[segmentIndex] = cached
+                            completedSegments++
+                            reportProgress()
+                        } else {
+                            pendingIndices += segmentIndex
+                        }
                     }
-                } else {
-                    // If a service changes/removes sentinels, retry each original text node.
-                    for (segmentIndex in batch) translateOne(segmentIndex)
+                    if (pendingIndices.isEmpty()) return@withLock
+
+                    val markers = (0..pendingIndices.size).map(::batchMarker)
+                    val payload = buildString {
+                        pendingIndices.forEachIndexed { index, segmentIndex ->
+                            append(markers[index])
+                            append(segments[segmentIndex])
+                        }
+                        append(markers.last())
+                    }
+
+                    val batchResult = try {
+                        provider.translate(
+                            TranslationRequest(
+                                text = payload,
+                                sourceLanguage = sourceLanguage,
+                                targetLanguage = targetLanguage,
+                            )
+                        ).translatedText
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
+
+                    val pieces = batchResult?.let { extractMarkedSegments(it, markers) }
+                    if (pieces != null) {
+                        pendingIndices.forEachIndexed { index, segmentIndex ->
+                            val value = pieces[index]
+                            results[segmentIndex] = value
+                            cache.put(
+                                createCacheKey(
+                                    provider.id, revision, sourceLanguage, targetLanguage,
+                                    segments[segmentIndex],
+                                ),
+                                value,
+                            )
+                            completedSegments++
+                            reportProgress()
+                        }
+                    } else {
+                        // If a service changes/removes sentinels, retry each original text node.
+                        for (segmentIndex in pendingIndices) translateOne(segmentIndex)
+                    }
                 }
             }
         }
@@ -393,6 +417,27 @@ class TranslationService @Inject constructor(
             .joinToString("") { "%02x".format(it) }
     }
 
+    private suspend fun translateCached(
+        provider: TranslationProvider,
+        cacheKey: String,
+        text: String,
+        sourceLanguage: String?,
+        targetLanguage: String,
+    ): TranslationResponse = inFlightLocks.withLock(cacheKey) {
+        cache.get(cacheKey)?.let {
+            return@withLock TranslationResponse(it, sourceLanguage, provider.id)
+        }
+        val response = provider.translate(
+            TranslationRequest(
+                text = text,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+            )
+        )
+        cache.put(cacheKey, response.translatedText)
+        response
+    }
+
     private fun providerFor(providerId: String): TranslationProvider =
         providerRegistry.requireProvider(providerId)
 
@@ -471,5 +516,42 @@ class TranslationService @Inject constructor(
             "script", "style", "noscript", "pre", "code", "kbd", "samp",
             "svg", "math", "textarea", "input", "select", "option",
         )
+    }
+}
+
+
+/**
+ * Serializes requests with the same cache key. Reference counting removes idle locks
+ * without allowing a new caller to race a waiter onto a different Mutex instance.
+ */
+private class KeyedTranslationMutex {
+    private data class Entry(val mutex: Mutex, var references: Int)
+
+    private val monitor = Any()
+    private val entries = mutableMapOf<String, Entry>()
+
+    suspend fun <T> withLock(key: String, action: suspend () -> T): T {
+        val mutex = synchronized(monitor) {
+            val entry = entries.getOrPut(key) { Entry(Mutex(), 0) }
+            entry.references++
+            entry.mutex
+        }
+
+        try {
+            mutex.lock()
+            try {
+                return action()
+            } finally {
+                mutex.unlock()
+            }
+        } finally {
+            synchronized(monitor) {
+                val entry = entries[key]
+                if (entry?.mutex === mutex) {
+                    entry.references--
+                    if (entry.references == 0) entries.remove(key)
+                }
+            }
+        }
     }
 }

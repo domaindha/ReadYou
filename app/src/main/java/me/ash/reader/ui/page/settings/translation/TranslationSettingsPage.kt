@@ -72,6 +72,7 @@ fun TranslationSettingsPage(
     }
     val initialConfig = remember(selectedProviderId) { viewModel.loadApiConfiguration(selectedProviderId) }
     val downloadedModels by viewModel.downloadedModels.collectAsState()
+    val cacheStats by viewModel.translationCacheStats.collectAsState()
     val scope = rememberCoroutineScope()
 
     var targetLanguage by rememberSaveable {
@@ -228,7 +229,12 @@ fun TranslationSettingsPage(
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("翻译缓存", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "缓存保存已翻译的文本片段。清理后，后续阅读时会重新翻译。",
+                        "缓存保存已翻译的文本片段。最多保留 250 条或 32 MB，并按最近使用时间淘汰旧条目。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "当前缓存：${cacheStats.entryCount} 条 · ${formatTranslationCacheSize(cacheStats.sizeBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -595,4 +601,11 @@ private fun LanguagePicker(
             }
         }
     }
+}
+
+
+private fun formatTranslationCacheSize(bytes: Long): String = when {
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024L -> "${bytes / 1024L} KB"
+    else -> String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0))
 }

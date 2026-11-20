@@ -23,15 +23,21 @@ class TranslationFileCache @Inject constructor(
 ) {
     private val directory = File(context.filesDir, "translation_cache")
     private val mutex = Mutex()
+    private var initialPruneDone = false
 
     suspend fun get(key: String): String? = withContext(ioDispatcher) {
         mutex.withLock {
             val file = fileFor(key)
-            if (!file.isFile) return@withLock null
-            runCatching {
+            if (!file.isFile) {
+                pruneOldEntriesIfNeeded()
+                return@withLock null
+            }
+            val value = runCatching {
                 file.setLastModified(System.currentTimeMillis())
                 file.readText(Charsets.UTF_8).takeIf { it.isNotEmpty() }
             }.getOrNull()
+            pruneOldEntriesIfNeeded()
+            value
         }
     }
 
@@ -53,6 +59,7 @@ class TranslationFileCache @Inject constructor(
                     destination.writeText(value, Charsets.UTF_8)
                 }
                 pruneOldEntries()
+                initialPruneDone = true
             } catch (_: Exception) {
                 // A cache failure must never fail an otherwise successful translation.
             } finally {
@@ -65,6 +72,19 @@ class TranslationFileCache @Inject constructor(
     suspend fun clear() = withContext(ioDispatcher) {
         mutex.withLock {
             directory.listFiles()?.forEach { it.delete() }
+            initialPruneDone = true
+        }
+    }
+
+    suspend fun stats(): TranslationCacheStats = withContext(ioDispatcher) {
+        mutex.withLock {
+            pruneOldEntries()
+            initialPruneDone = true
+            val files = cacheFiles()
+            TranslationCacheStats(
+                entryCount = files.size,
+                sizeBytes = files.sumOf { it.length() },
+            )
         }
     }
 
@@ -75,16 +95,39 @@ class TranslationFileCache @Inject constructor(
         return File(directory, "$digest.txt")
     }
 
+    private fun pruneOldEntriesIfNeeded() {
+        if (initialPruneDone) return
+        pruneOldEntries()
+        initialPruneDone = true
+    }
+
+    private fun cacheFiles(): List<File> =
+        directory.listFiles()?.filter { it.isFile && it.extension == "txt" }.orEmpty()
+
     private fun pruneOldEntries() {
-        val files = directory.listFiles()?.filter { it.isFile && it.extension == "txt" } ?: return
-        if (files.size <= MAX_ENTRIES) return
-        files.sortedBy { it.lastModified() }
-            .take(files.size - MAX_ENTRIES)
-            .forEach { it.delete() }
+        val files = cacheFiles()
+        var remainingEntries = files.size
+        var remainingBytes = files.sumOf { it.length() }
+        if (remainingEntries <= MAX_ENTRIES && remainingBytes <= MAX_CACHE_BYTES) return
+
+        for (file in files.sortedBy { it.lastModified() }) {
+            if (remainingEntries <= MAX_ENTRIES && remainingBytes <= MAX_CACHE_BYTES) break
+            val length = file.length()
+            if (file.delete()) {
+                remainingEntries--
+                remainingBytes -= length
+            }
+        }
     }
 
     private companion object {
         const val MAX_ENTRIES = 250
         const val MAX_ENTRY_CHARS = 250_000
+        const val MAX_CACHE_BYTES = 32L * 1024L * 1024L
     }
 }
+
+data class TranslationCacheStats(
+    val entryCount: Int,
+    val sizeBytes: Long,
+)

@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import me.ash.reader.infrastructure.translation.TranslationApiConfiguration
 import me.ash.reader.infrastructure.translation.TranslationEngine
 import me.ash.reader.infrastructure.translation.TranslationService
+import me.ash.reader.infrastructure.translation.TranslationCacheStats
 import me.ash.reader.infrastructure.translation.TranslationProviderDescriptor
 
 @HiltViewModel
@@ -23,6 +24,20 @@ class TranslationSettingsViewModel @Inject constructor(
     private val _downloadedModels = MutableStateFlow<List<String>>(emptyList())
     val downloadedModels = _downloadedModels.asStateFlow()
 
+    private val _translationCacheStats = MutableStateFlow(TranslationCacheStats(0, 0L))
+    val translationCacheStats = _translationCacheStats.asStateFlow()
+
+    init {
+        refreshTranslationCacheStats()
+    }
+
+    fun refreshTranslationCacheStats() {
+        viewModelScope.launch {
+            runCatching { translationService.translationCacheStats() }
+                .onSuccess { _translationCacheStats.value = it }
+        }
+    }
+
     fun isBilingualReadingEnabled(): Boolean = translationService.isBilingualReadingEnabled()
 
     val articleMetadataTranslationEnabled = translationService.articleMetadataTranslationEnabled
@@ -30,7 +45,10 @@ class TranslationSettingsViewModel @Inject constructor(
     fun setArticleMetadataTranslationEnabled(enabled: Boolean) =
         translationService.setArticleMetadataTranslationEnabled(enabled)
 
-    suspend fun clearTranslationCache() = translationService.clearTranslationCache()
+    suspend fun clearTranslationCache() {
+        translationService.clearTranslationCache()
+        _translationCacheStats.value = translationService.translationCacheStats()
+    }
 
     fun setBilingualReadingEnabled(enabled: Boolean) =
         translationService.setBilingualReadingEnabled(enabled)

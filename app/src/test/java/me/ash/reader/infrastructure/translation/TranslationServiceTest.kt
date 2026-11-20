@@ -1,5 +1,8 @@
 package me.ash.reader.infrastructure.translation
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
@@ -8,6 +11,40 @@ import org.mockito.Mockito
 import org.mockito.kotlin.whenever
 
 class TranslationServiceTest {
+    @Test
+    fun concurrentRequestsForSameTextShareOneProviderCall() = runBlocking {
+        val provider = DelayedCountingProvider()
+        val registry = TranslationProviderRegistry(setOf(provider))
+        val cache = Mockito.mock(TranslationFileCache::class.java)
+        val cachedValues = mutableMapOf<String, String>()
+        Mockito.doAnswer { invocation ->
+            cachedValues[invocation.getArgument<String>(0)]
+        }.`when`(cache).get(Mockito.anyString())
+        Mockito.doAnswer { invocation ->
+            cachedValues[invocation.getArgument<String>(0)] = invocation.getArgument(1)
+            null
+        }.`when`(cache).put(Mockito.anyString(), Mockito.anyString())
+        val configStore = Mockito.mock(TranslationApiConfigStore::class.java)
+        whenever(configStore.loadConfiguration(provider.id)).thenReturn(
+            testConfiguration(endpoint = "https://single-flight.example/translate")
+        )
+        val service = TranslationService(registry, cache, configStore)
+
+        val results = coroutineScope {
+            val first = async {
+                service.translateText("same source", "zh-CN", "en", providerId = provider.id)
+            }
+            val second = async {
+                service.translateText("same source", "zh-CN", "en", providerId = provider.id)
+            }
+            listOf(first.await(), second.await())
+        }
+
+        assertEquals("translated:same source", results[0].translatedText)
+        assertEquals(results[0].translatedText, results[1].translatedText)
+        assertEquals(1, provider.requestCount)
+    }
+
     @Test
     fun duplicatedBatchMarkerFallsBackToTranslatingEachOriginalSegment() = runBlocking {
         val provider = DuplicateMarkerProvider()
@@ -453,5 +490,22 @@ class TranslationServiceTest {
         private companion object {
             val MARKER = Regex("<\\|RY_TRANSLATION_SEGMENT_[^>]*\\|>")
         }
+    }
+}
+
+
+private class DelayedCountingProvider : TranslationProvider {
+    override val id = "provider_single_flight"
+    override val capabilities = TranslationProviderCapabilities(
+        requiresNetwork = true,
+        supportsBatching = false,
+    )
+    @Volatile
+    var requestCount = 0
+
+    override suspend fun translate(request: TranslationRequest): TranslationResponse {
+        requestCount++
+        delay(80)
+        return TranslationResponse("translated:${request.text}", request.sourceLanguage, id)
     }
 }
