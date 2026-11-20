@@ -35,6 +35,11 @@ class TranslationService @Inject constructor(
     fun setBilingualReadingEnabled(enabled: Boolean) =
         configStore.setBilingualReadingEnabled(enabled)
 
+    val articleMetadataTranslationEnabled = configStore.articleMetadataTranslationEnabled
+
+    fun setArticleMetadataTranslationEnabled(enabled: Boolean) =
+        configStore.setArticleMetadataTranslationEnabled(enabled)
+
     fun isAutoTranslationEnabled(feedId: String): Boolean =
         configStore.isAutoTranslationEnabled(feedId)
 

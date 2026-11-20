@@ -142,6 +142,144 @@ constructor(
         viewModelScope.launch {
             syncWorkerStatusFlow.debounce(500L).collect { _isSyncingFlow.value = it }
         }
+        viewModelScope.launch {
+            translationService.articleMetadataTranslationEnabled.collect { enabled ->
+                if (!enabled) {
+                    synchronized(metadataQueueLock) {
+                        metadataQueue.clear()
+                        metadataQueueJob?.cancel()
+                        metadataQueueJob = null
+                    }
+                    _translatedArticleMetadata.value = emptyMap()
+                }
+            }
+        }
+    }
+
+    fun currentArticleMetadataTranslationSignature(): String = listOf(
+        translationService.selectedProviderId(),
+        translationService.sourceLanguage().takeUnless { it == "auto" }.orEmpty(),
+        translationService.targetLanguage(),
+    ).joinToString("\u0000")
+
+    /**
+     * Queue only visible RSS cards. The single worker keeps public APIs such as MyMemory
+     * serialized and avoids spending a cloud quota on articles the user has not opened.
+     */
+    fun translateVisibleArticleMetadata(articles: List<ArticleWithFeed>) {
+        if (!translationService.articleMetadataTranslationEnabled.value) return
+
+        val sourceLanguage = translationService.sourceLanguage()
+        val selectedProvider = translationService.availableProviders()
+            .firstOrNull { it.id == translationService.selectedProviderId() }
+        if (
+            selectedProvider?.capabilities?.requiresExplicitSourceLanguage == true &&
+            sourceLanguage == "auto"
+        ) return
+
+        val signature = currentArticleMetadataTranslationSignature()
+        synchronized(metadataQueueLock) {
+            articles.distinctBy { it.article.id }.forEach { articleWithFeed ->
+                val articleId = articleWithFeed.article.id
+                val existing = _translatedArticleMetadata.value[articleId]
+                if (existing?.settingsSignature == signature || articleId in metadataQueue) {
+                    return@forEach
+                }
+                _translatedArticleMetadata.update {
+                    it + (articleId to ArticleMetadataTranslation(
+                        settingsSignature = signature,
+                        isTranslating = true,
+                    ))
+                }
+                metadataQueue[articleId] = articleWithFeed
+            }
+            ensureMetadataQueueWorkerLocked()
+        }
+    }
+
+    private fun ensureMetadataQueueWorkerLocked() {
+        if (metadataQueueJob?.isActive == true || metadataQueue.isEmpty()) return
+        metadataQueueJob = viewModelScope.launch(ioDispatcher) {
+            try {
+                while (true) {
+                    val next = synchronized(metadataQueueLock) {
+                        val articleId = metadataQueue.keys.firstOrNull()
+                        if (articleId == null) null else articleId to metadataQueue.remove(articleId)
+                    } ?: break
+                    val articleId = next.first
+                    val article = next.second ?: continue
+                    val providerId = translationService.selectedProviderId()
+                    val targetLanguage = translationService.targetLanguage()
+                    val sourceLanguage = translationService.sourceLanguage()
+                        .takeUnless { it == "auto" }
+                    val signature = listOf(
+                        providerId,
+                        sourceLanguage.orEmpty(),
+                        targetLanguage,
+                    ).joinToString("\u0000")
+
+                    try {
+                        val translatedTitle = article.article.title
+                            .takeIf { it.isNotBlank() }
+                            ?.let {
+                                translationService.translateText(
+                                    text = it,
+                                    targetLanguage = targetLanguage,
+                                    sourceLanguage = sourceLanguage,
+                                    providerId = providerId,
+                                ).translatedText
+                            }
+                        val translatedSummary = article.article.shortDescription
+                            .takeIf { it.isNotBlank() }
+                            ?.let {
+                                translationService.translateText(
+                                    text = it,
+                                    targetLanguage = targetLanguage,
+                                    sourceLanguage = sourceLanguage,
+                                    providerId = providerId,
+                                ).translatedText
+                            }
+                        if (
+                            translationService.articleMetadataTranslationEnabled.value &&
+                            currentArticleMetadataTranslationSignature() == signature
+                        ) {
+                            _translatedArticleMetadata.update { current ->
+                                current + (articleId to ArticleMetadataTranslation(
+                                    settingsSignature = signature,
+                                    translatedTitle = translatedTitle,
+                                    translatedSummary = translatedSummary,
+                                ))
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        Timber.w(error, "Article metadata translation failed: $articleId")
+                        if (
+                            translationService.articleMetadataTranslationEnabled.value &&
+                            currentArticleMetadataTranslationSignature() == signature
+                        ) {
+                            _translatedArticleMetadata.update { current ->
+                                current + (articleId to ArticleMetadataTranslation(
+                                    settingsSignature = signature,
+                                    error = error.message ?: "Translation failed",
+                                ))
+                            }
+                        }
+                    }
+                }
+            } finally {
+                synchronized(metadataQueueLock) {
+                    metadataQueueJob = null
+                    if (
+                        metadataQueue.isNotEmpty() &&
+                        translationService.articleMetadataTranslationEnabled.value
+                    ) {
+                        ensureMetadataQueueWorkerLocked()
+                    }
+                }
+            }
+        }
     }
 
     fun updateReadStatus(
@@ -273,6 +411,15 @@ constructor(
         get() = readingUiState.value.articleWithFeed?.article
 
     private var translationJob: Job? = null
+
+    private val _translatedArticleMetadata =
+        MutableStateFlow<Map<String, ArticleMetadataTranslation>>(emptyMap())
+    val translatedArticleMetadata = _translatedArticleMetadata.asStateFlow()
+    val articleMetadataTranslationEnabled = translationService.articleMetadataTranslationEnabled
+
+    private val metadataQueueLock = Any()
+    private val metadataQueue = LinkedHashMap<String, ArticleWithFeed>()
+    private var metadataQueueJob: Job? = null
 
     private val currentFeed: Feed?
         get() = readingUiState.value.articleWithFeed?.feed
@@ -618,6 +765,14 @@ constructor(
 }
 
 data class FlowUiState(val pagerData: PagerData, val nextFilterState: FilterState? = null)
+
+data class ArticleMetadataTranslation(
+    val settingsSignature: String,
+    val translatedTitle: String? = null,
+    val translatedSummary: String? = null,
+    val isTranslating: Boolean = false,
+    val error: String? = null,
+)
 
 data class ReadingUiState(
     val articleWithFeed: ArticleWithFeed? = null,

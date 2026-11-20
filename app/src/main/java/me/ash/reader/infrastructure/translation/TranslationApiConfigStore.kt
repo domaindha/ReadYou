@@ -12,6 +12,8 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Stores custom HTTP translation settings locally. The API key is encrypted with an
@@ -23,6 +25,11 @@ class TranslationApiConfigStore @Inject constructor(
 ) {
     private val preferences =
         context.getSharedPreferences("translation_api_settings", Context.MODE_PRIVATE)
+
+    private val _articleMetadataTranslationEnabled = MutableStateFlow(
+        preferences.getBoolean(KEY_ARTICLE_METADATA_TRANSLATION_ENABLED, false)
+    )
+    val articleMetadataTranslationEnabled = _articleMetadataTranslationEnabled.asStateFlow()
 
     fun loadConfiguration(providerId: String = TranslationEngine.HTTP_JSON.id): TranslationApiConfiguration? {
         val endpoint = preferences.getString(storageKey(KEY_ENDPOINT, providerId), null)?.trim().orEmpty()
@@ -117,6 +124,11 @@ class TranslationApiConfigStore @Inject constructor(
         preferences.edit().putBoolean(KEY_BILINGUAL_READING, enabled).apply()
     }
 
+    fun setArticleMetadataTranslationEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_ARTICLE_METADATA_TRANSLATION_ENABLED, enabled).apply()
+        _articleMetadataTranslationEnabled.value = enabled
+    }
+
     fun isAutoTranslationEnabled(feedId: String): Boolean {
         require(feedId.isNotBlank()) { "Feed ID is required." }
         return preferences.getBoolean(autoTranslationKey(feedId), false)
@@ -188,5 +200,6 @@ class TranslationApiConfigStore @Inject constructor(
         const val KEY_TARGET_LANGUAGE = "target_language"
         const val KEY_SOURCE_LANGUAGE = "source_language"
         const val KEY_BILINGUAL_READING = "bilingual_reading_enabled"
+        const val KEY_ARTICLE_METADATA_TRANSLATION_ENABLED = "article_metadata_translation_enabled"
     }
 }

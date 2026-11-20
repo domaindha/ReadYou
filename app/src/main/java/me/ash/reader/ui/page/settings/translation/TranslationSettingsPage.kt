@@ -80,6 +80,7 @@ fun TranslationSettingsPage(
     var bilingualReading by rememberSaveable {
         mutableStateOf(viewModel.isBilingualReadingEnabled())
     }
+    val articleMetadataTranslationEnabled by viewModel.articleMetadataTranslationEnabled.collectAsState()
     var endpoint by rememberSaveable(selectedProviderId) {
         mutableStateOf(
             initialConfig?.endpoint ?: if (selectedProviderId == AzureTranslatorProvider.PROVIDER_ID) {
@@ -203,6 +204,24 @@ fun TranslationSettingsPage(
                             bilingualReading = it
                             viewModel.setBilingualReadingEnabled(it)
                         },
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("翻译信息流标题和摘要", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "只翻译屏幕当前可见的文章，译文使用持久化缓存。启用云端引擎会向对应服务发送标题和摘要，并消耗其额度。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = articleMetadataTranslationEnabled,
+                        onCheckedChange = viewModel::setArticleMetadataTranslationEnabled,
                     )
                 }
 

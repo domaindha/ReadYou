@@ -25,6 +25,11 @@ class TranslationSettingsViewModel @Inject constructor(
 
     fun isBilingualReadingEnabled(): Boolean = translationService.isBilingualReadingEnabled()
 
+    val articleMetadataTranslationEnabled = translationService.articleMetadataTranslationEnabled
+
+    fun setArticleMetadataTranslationEnabled(enabled: Boolean) =
+        translationService.setArticleMetadataTranslationEnabled(enabled)
+
     suspend fun clearTranslationCache() = translationService.clearTranslationCache()
 
     fun setBilingualReadingEnabled(enabled: Boolean) =
