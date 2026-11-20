@@ -9,6 +9,7 @@ import be.ceau.opml.entity.Outline
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 import me.ash.reader.domain.model.feed.Feed
 import me.ash.reader.domain.repository.FeedDao
 import me.ash.reader.domain.repository.GroupDao
@@ -74,7 +75,70 @@ class OpmlService @Inject constructor(
     }
 
     /**
-     * Exports OPML file.
+     * Exports every account and all of its subscriptions into one importable OPML document.
+     * Group names are prefixed with the account name when multiple accounts exist so
+     * identically named folders remain distinguishable after importing the merged file.
+     */
+    @Throws(Exception::class)
+    suspend fun saveAllAccountsToString(attachInfo: Boolean = true): String = withContext(ioDispatcher) {
+        val accounts = accountService.getAccounts().first()
+        val groupsWithAccounts = accounts.flatMap { account ->
+            val accountId = account.id ?: return@flatMap emptyList()
+            groupDao.queryAllGroupWithFeed(accountId).map { account to it }
+        }
+
+        OpmlWriter().write(
+            Opml(
+                "2.0",
+                Head(
+                    accounts.joinToString(" + ") { it.name },
+                    Date().toString(), null, null, null,
+                    null, null, null, null,
+                    null, null, null, null,
+                ),
+                Body(groupsWithAccounts.map { (account, groupWithFeed) ->
+                    val group = groupWithFeed.group
+                    val groupName = if (accounts.size > 1) {
+                        "${account.name} / ${group.name}"
+                    } else {
+                        group.name
+                    }
+                    Outline(
+                        mutableMapOf(
+                            "text" to groupName,
+                            "title" to groupName,
+                        ).apply {
+                            if (attachInfo) {
+                                put("isDefault", (group.id == account.id?.getDefaultGroupId()).toString())
+                                put("accountName", account.name)
+                                put("accountType", account.type.name)
+                            }
+                        },
+                        groupWithFeed.feeds.map { feed ->
+                            Outline(
+                                mutableMapOf(
+                                    "text" to feed.name,
+                                    "title" to feed.name,
+                                    "xmlUrl" to feed.url,
+                                    "htmlUrl" to feed.url,
+                                ).apply {
+                                    if (attachInfo) {
+                                        put("isNotification", feed.isNotification.toString())
+                                        put("isFullContent", feed.isFullContent.toString())
+                                        put("isBrowser", feed.isBrowser.toString())
+                                    }
+                                },
+                                listOf(),
+                            )
+                        },
+                    )
+                }),
+            )
+        )!!
+    }
+
+    /**
+     * Exports OPML file for a single account.
      */
     @Throws(Exception::class)
     suspend fun saveToString(accountId: Int, attachInfo: Boolean): String {

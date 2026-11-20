@@ -83,10 +83,7 @@ constructor(
      * and the standard ReadYou feed options supported by OPML.
      */
     suspend fun exportSubscriptions(): String =
-        opmlService.saveToString(
-            accountId = accountService.getCurrentAccountId(),
-            attachInfo = true,
-        )
+        opmlService.saveAllAccountsToString(attachInfo = true)
 
     fun selectedGroup(groupId: String) {
         _subscribeState.update {
