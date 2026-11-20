@@ -159,22 +159,6 @@ constructor(
             syncWorkerStatusFlow.debounce(500L).collect { _isSyncingFlow.value = it }
         }
         viewModelScope.launch {
-            translationService.wifiConnectionChanges.collect { isWifiConnected ->
-                if (isWifiConnected) {
-                    val articleId = _readerState.value.articleId
-                    if (articleId != null) maybeAutoTranslate(articleId)
-                }
-            }
-        }
-        viewModelScope.launch {
-            translationService.wifiConnectionChanges.collect { isWifiConnected ->
-                if (isWifiConnected) {
-                    val visible = synchronized(metadataQueueLock) { metadataVisibleArticles }
-                    if (visible.isNotEmpty()) translateVisibleArticleMetadata(visible)
-                }
-            }
-        }
-        viewModelScope.launch {
             translationService.articleMetadataTranslationEnabled.collect { enabled ->
                 if (!enabled) {
                     synchronized(metadataQueueLock) {
@@ -543,6 +527,21 @@ constructor(
     private val currentFeed: Feed?
         get() = readingUiState.value.articleWithFeed?.feed
 
+    // Register after _readerState is initialized; this single observer resumes both reader
+    // and feed-card auto translation when the device reconnects to Wi-Fi.
+    init {
+        viewModelScope.launch {
+            translationService.wifiConnectionChanges.collect { isWifiConnected ->
+                if (isWifiConnected) {
+                    val articleId = _readerState.value.articleId
+                    if (articleId != null) maybeAutoTranslate(articleId)
+                    val visible = synchronized(metadataQueueLock) { metadataVisibleArticles }
+                    if (visible.isNotEmpty()) translateVisibleArticleMetadata(visible)
+                }
+            }
+        }
+    }
+
     fun initData(articleId: String, listIndex: Int? = null) {
         translationJob?.cancel()
         translationJob = null
@@ -684,9 +683,13 @@ constructor(
 
     private fun maybeAutoTranslate(articleId: String) {
         val feedId = currentFeed?.id ?: return
-        if (_readerState.value.articleId != articleId) return
-        if (_readerState.value.content is ReaderState.Loading || _readerState.value.content is ReaderState.Error) return
-        if (translationService.isAutoTranslationEnabled(feedId)) toggleTranslation(isAutomatic = true)
+        val state = _readerState.value
+        if (state.articleId != articleId || state.isTranslating || state.isTranslated) return
+        if (state.translatedContent != null && state.translationError == null) return
+        if (state.content is ReaderState.Loading || state.content is ReaderState.Error) return
+        if (translationService.isAutoTranslationEnabled(feedId)) {
+            toggleTranslation(isAutomatic = true)
+        }
     }
 
     fun updateReadStatus(isUnread: Boolean) {
