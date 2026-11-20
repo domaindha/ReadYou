@@ -152,6 +152,7 @@ constructor(
                         metadataQueue.clear()
                         metadataVisibleArticleIds = emptySet()
                         metadataActiveArticleId = null
+                        metadataActiveSettingsSignature = null
                         // Let the cancelled worker clear its own Job reference in finally.
                         metadataQueueJob?.cancel()
                     }
@@ -181,13 +182,13 @@ constructor(
         val sourceLanguage = translationService.sourceLanguage()
         val selectedProvider = translationService.availableProviders()
             .firstOrNull { it.id == translationService.selectedProviderId() }
-        if (
+        val canTranslate = !(
             selectedProvider?.capabilities?.requiresExplicitSourceLanguage == true &&
-            sourceLanguage == "auto"
-        ) return
-
+                sourceLanguage == "auto"
+        )
+        val articlesToTranslate = if (canTranslate) articles else emptyList()
         val signature = currentArticleMetadataTranslationSignature()
-        val visibleArticleIds = articles.map { it.article.id }.toSet()
+        val visibleArticleIds = articlesToTranslate.map { it.article.id }.toSet()
         synchronized(metadataQueueLock) {
             metadataVisibleArticleIds = visibleArticleIds
             // Drop queued work and UI translations for cards that have left the viewport.
@@ -199,15 +200,20 @@ constructor(
 
             // Cancel the in-flight request too; otherwise scrolling quickly can still spend
             // cloud quota on an article that is no longer visible.
-            val activeNoLongerVisible = metadataActiveArticleId
-                ?.takeIf { it !in visibleArticleIds }
-            if (activeNoLongerVisible != null) {
+            val activeArticleId = metadataActiveArticleId
+            val activeMustRestart = activeArticleId?.takeIf {
+                it !in visibleArticleIds ||
+                    (metadataActiveSettingsSignature != null &&
+                        metadataActiveSettingsSignature != signature)
+            }
+            if (activeMustRestart != null) {
                 metadataActiveArticleId = null
-                _translatedArticleMetadata.update { it - activeNoLongerVisible }
+                metadataActiveSettingsSignature = null
+                _translatedArticleMetadata.update { it - activeMustRestart }
                 metadataQueueJob?.cancel()
             }
 
-            articles.distinctBy { it.article.id }.forEach { articleWithFeed ->
+            articlesToTranslate.distinctBy { it.article.id }.forEach { articleWithFeed ->
                 val articleId = articleWithFeed.article.id
                 val sourceContentSignature = articleMetadataSourceSignature(
                     articleWithFeed.article.title,
@@ -269,6 +275,11 @@ constructor(
                         sourceLanguage.orEmpty(),
                         targetLanguage,
                     ).joinToString("\u0000")
+                    synchronized(metadataQueueLock) {
+                        if (metadataActiveArticleId == articleId) {
+                            metadataActiveSettingsSignature = signature
+                        }
+                    }
 
                     try {
                         currentCoroutineContext().ensureActive()
@@ -335,6 +346,7 @@ constructor(
                         synchronized(metadataQueueLock) {
                             if (metadataActiveArticleId == articleId) {
                                 metadataActiveArticleId = null
+                                metadataActiveSettingsSignature = null
                             }
                         }
                     }
@@ -345,6 +357,7 @@ constructor(
                     if (metadataQueueJob === thisWorker) {
                         metadataQueueJob = null
                         metadataActiveArticleId = null
+                        metadataActiveSettingsSignature = null
                         if (
                             metadataQueue.isNotEmpty() &&
                             translationService.articleMetadataTranslationEnabled.value
@@ -496,6 +509,7 @@ constructor(
     private val metadataQueue = LinkedHashMap<String, ArticleWithFeed>()
     private var metadataQueueJob: Job? = null
     private var metadataActiveArticleId: String? = null
+    private var metadataActiveSettingsSignature: String? = null
     private var metadataVisibleArticleIds: Set<String> = emptySet()
 
     private val currentFeed: Feed?
