@@ -4,7 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.os.Build
+import android.net.NetworkRequest
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,16 +37,13 @@ class AndroidTranslationNetworkPolicy @Inject constructor(
 
     override fun isWifiConnected(): Boolean {
         val manager = connectivityManager ?: return false
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val network = manager.activeNetwork ?: return false
-            val capabilities = manager.getNetworkCapabilities(network) ?: return false
-            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-        } else {
-            @Suppress("DEPRECATION")
-            manager.allNetworks.any { network ->
-                manager.getNetworkCapabilities(network)
-                    ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-            }
+        // Inspect all connected transports so a VPN default network does not hide Wi-Fi underneath.
+        @Suppress("DEPRECATION")
+        return manager.allNetworks.any { network ->
+            manager.getNetworkCapabilities(network)?.let { capabilities ->
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            } == true
         }
     }
 
@@ -76,18 +73,10 @@ class AndroidTranslationNetworkPolicy @Inject constructor(
         }
 
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                manager.registerDefaultNetworkCallback(callback)
-            } else {
-                @Suppress("DEPRECATION")
-                manager.allNetworks.forEach { network ->
-                    trySend(manager.getNetworkCapabilities(network)
-                        ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true)
-                }
-                trySend(isWifiConnected())
-                awaitClose { }
-                return@callbackFlow
-            }
+            val wifiRequest = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .build()
+            manager.registerNetworkCallback(wifiRequest, callback)
         } catch (_: SecurityException) {
             trySend(false)
             awaitClose { }

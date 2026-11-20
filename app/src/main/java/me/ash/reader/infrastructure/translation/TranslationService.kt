@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.TextNode
@@ -597,17 +598,18 @@ private class KeyedTranslationMutex {
 internal class CloudTranslationRateLimiter(
     private val minimumIntervalMillis: Long = 500L,
 ) {
-    private val mutex = Mutex()
+    private val providerLocks = ConcurrentHashMap<String, Mutex>()
     private val lastStartedAtNanos = mutableMapOf<String, Long>()
 
     suspend fun awaitIfNeeded(provider: TranslationProvider) {
         if (!provider.capabilities.requiresNetwork) return
-        mutex.withLock {
-            val now = System.nanoTime()
-            val previous = lastStartedAtNanos[provider.id] ?: 0L
-            val elapsedMillis = (now - previous) / 1_000_000L
-            val waitMillis = (minimumIntervalMillis - elapsedMillis).coerceAtLeast(0L)
-            if (waitMillis > 0L) delay(waitMillis)
+        providerLocks.computeIfAbsent(provider.id) { Mutex() }.withLock {
+            val previous = lastStartedAtNanos[provider.id]
+            if (previous != null) {
+                val elapsedMillis = (System.nanoTime() - previous) / 1_000_000L
+                val waitMillis = (minimumIntervalMillis - elapsedMillis).coerceAtLeast(0L)
+                if (waitMillis > 0L) delay(waitMillis)
+            }
             lastStartedAtNanos[provider.id] = System.nanoTime()
         }
     }
