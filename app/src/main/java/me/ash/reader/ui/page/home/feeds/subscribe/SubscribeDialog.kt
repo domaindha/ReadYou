@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -19,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -26,6 +28,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
+import kotlinx.coroutines.launch
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import me.ash.reader.R
@@ -48,6 +52,7 @@ fun SubscribeDialog(
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
     val subscribeUiState = subscribeViewModel.subscribeUiState.collectAsStateValue()
     val subscribeState = subscribeViewModel.subscribeState.collectAsStateValue()
 
@@ -55,6 +60,28 @@ fun SubscribeDialog(
         it?.let { uri ->
             context.contentResolver.openInputStream(uri)?.let { inputStream ->
                 subscribeViewModel.importFromInputStream(inputStream)
+            }
+        }
+    }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/xml")
+    ) { uri ->
+        uri?.let { destination ->
+            scope.launch {
+                runCatching {
+                    val opml = subscribeViewModel.exportSubscriptions()
+                    val output = context.contentResolver.openOutputStream(destination)
+                        ?: error("无法创建导出文件")
+                    output.use { it.write(opml.toByteArray(Charsets.UTF_8)) }
+                }.onSuccess {
+                    Toast.makeText(context, "全部订阅源已导出为 OPML/XML 文件", Toast.LENGTH_LONG).show()
+                }.onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        "导出失败：${error.message ?: "未知错误"}",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
             }
         }
     }
@@ -194,15 +221,38 @@ fun SubscribeDialog(
                 }
             },
             dismissButton = {
-                if (subscribeState is SubscribeState.Idle && subscribeState.importFromOpmlEnabled) {
-                    TextButton(
-                        onClick = {
-                            focusManager.clearFocus()
-                            launcher.launch(arrayOf(MimeType.ANY))
-                            subscribeViewModel.hideDrawer()
+                if (subscribeState is SubscribeState.Idle) {
+                    Row {
+                        if (subscribeState.importFromOpmlEnabled) {
+                            TextButton(
+                                onClick = {
+                                    focusManager.clearFocus()
+                                    launcher.launch(arrayOf(MimeType.ANY))
+                                    subscribeViewModel.hideDrawer()
+                                }
+                            ) {
+                                Text(text = stringResource(R.string.import_from_opml))
+                            }
                         }
-                    ) {
-                        Text(text = stringResource(R.string.import_from_opml))
+                        TextButton(
+                            onClick = {
+                                focusManager.clearFocus()
+                                exportLauncher.launch("ReadYou-Subscriptions.opml")
+                                subscribeViewModel.hideDrawer()
+                            }
+                        ) {
+                            Text("导出全部订阅")
+                        }
+                        if (!subscribeState.importFromOpmlEnabled) {
+                            TextButton(
+                                onClick = {
+                                    focusManager.clearFocus()
+                                    subscribeViewModel.hideDrawer()
+                                }
+                            ) {
+                                Text(text = stringResource(R.string.cancel))
+                            }
+                        }
                     }
                 } else {
                     TextButton(

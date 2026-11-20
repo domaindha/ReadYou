@@ -37,7 +37,7 @@ constructor(
     private val androidStringsHelper: AndroidStringsHelper,
     private val translationService: TranslationService,
     @ApplicationScope private val applicationScope: CoroutineScope,
-    accountService: AccountService,
+    private val accountService: AccountService,
 ) : ViewModel() {
 
     private val _subscribeUiState = MutableStateFlow(SubscribeUiState())
@@ -73,10 +73,20 @@ constructor(
 
     fun importFromInputStream(inputStream: InputStream) {
         applicationScope.launch {
-            opmlService.saveToDatabase(inputStream)
+            inputStream.use { opmlService.saveToDatabase(it) }
             rssService.get().doSyncOneTime()
         }
     }
+
+    /**
+     * Exports every subscription in the current account, preserving group structure
+     * and the standard ReadYou feed options supported by OPML.
+     */
+    suspend fun exportSubscriptions(): String =
+        opmlService.saveToString(
+            accountId = accountService.getCurrentAccountId(),
+            attachInfo = true,
+        )
 
     fun selectedGroup(groupId: String) {
         _subscribeState.update {
