@@ -111,7 +111,7 @@ class OpmlService @Inject constructor(
                             if (attachInfo) {
                                 put("isDefault", (group.id == account.id?.getDefaultGroupId()).toString())
                                 put("accountName", account.name)
-                                put("accountType", account.type.name)
+                                put("accountType", account.type.id.toString())
                             }
                         },
                         groupWithFeed.feeds.map { feed ->
