@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import me.ash.reader.domain.data.ArticlePagingListUseCase
 import me.ash.reader.domain.data.DiffMapHolder
 import me.ash.reader.domain.data.FilterState
@@ -149,6 +150,8 @@ constructor(
                 if (!enabled) {
                     synchronized(metadataQueueLock) {
                         metadataQueue.clear()
+                        metadataVisibleArticleIds = emptySet()
+                        metadataActiveArticleId = null
                         // Let the cancelled worker clear its own Job reference in finally.
                         metadataQueueJob?.cancel()
                     }
@@ -186,6 +189,7 @@ constructor(
         val signature = currentArticleMetadataTranslationSignature()
         val visibleArticleIds = articles.map { it.article.id }.toSet()
         synchronized(metadataQueueLock) {
+            metadataVisibleArticleIds = visibleArticleIds
             // Drop requests that were queued for cards which have already left the viewport.
             val noLongerVisible = metadataQueue.keys.filter { it !in visibleArticleIds }
             noLongerVisible.forEach { articleId -> metadataQueue.remove(articleId) }
@@ -193,6 +197,16 @@ constructor(
                 _translatedArticleMetadata.update { current ->
                     current.filterKeys { it !in noLongerVisible }
                 }
+            }
+
+            // Cancel the in-flight request too; otherwise scrolling quickly can still spend
+            // cloud quota on an article that is no longer visible.
+            val activeNoLongerVisible = metadataActiveArticleId
+                ?.takeIf { it !in visibleArticleIds }
+            if (activeNoLongerVisible != null) {
+                metadataActiveArticleId = null
+                _translatedArticleMetadata.update { it - activeNoLongerVisible }
+                metadataQueueJob?.cancel()
             }
 
             articles.distinctBy { it.article.id }.forEach { articleWithFeed ->
@@ -233,7 +247,13 @@ constructor(
                 while (true) {
                     val next = synchronized(metadataQueueLock) {
                         val articleId = metadataQueue.keys.firstOrNull()
-                        if (articleId == null) null else articleId to metadataQueue.remove(articleId)
+                        if (articleId == null) {
+                            metadataActiveArticleId = null
+                            null
+                        } else {
+                            metadataActiveArticleId = articleId
+                            articleId to metadataQueue.remove(articleId)
+                        }
                     } ?: break
                     val articleId = next.first
                     val article = next.second ?: continue
@@ -253,6 +273,7 @@ constructor(
                     ).joinToString("\u0000")
 
                     try {
+                        currentCoroutineContext().ensureActive()
                         val translatedTitle = article.article.title
                             .takeIf { it.isNotBlank() }
                             ?.let {
@@ -263,6 +284,7 @@ constructor(
                                     providerId = providerId,
                                 ).translatedText
                             }
+                        currentCoroutineContext().ensureActive()
                         val translatedSummary = article.article.shortDescription
                             .takeIf { it.isNotBlank() }
                             ?.let {
@@ -273,33 +295,48 @@ constructor(
                                     providerId = providerId,
                                 ).translatedText
                             }
-                        if (
-                            translationService.articleMetadataTranslationEnabled.value &&
-                            currentArticleMetadataTranslationSignature() == signature
-                        ) {
-                            _translatedArticleMetadata.update { current ->
-                                current + (articleId to ArticleMetadataTranslation(
-                                    settingsSignature = signature,
-                                    sourceContentSignature = sourceContentSignature,
-                                    translatedTitle = translatedTitle,
-                                    translatedSummary = translatedSummary,
-                                ))
+                        currentCoroutineContext().ensureActive()
+                        synchronized(metadataQueueLock) {
+                            if (
+                                metadataActiveArticleId == articleId &&
+                                articleId in metadataVisibleArticleIds &&
+                                translationService.articleMetadataTranslationEnabled.value &&
+                                currentArticleMetadataTranslationSignature() == signature
+                            ) {
+                                _translatedArticleMetadata.update { current ->
+                                    current + (articleId to ArticleMetadataTranslation(
+                                        settingsSignature = signature,
+                                        sourceContentSignature = sourceContentSignature,
+                                        translatedTitle = translatedTitle,
+                                        translatedSummary = translatedSummary,
+                                    ))
+                                }
                             }
                         }
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Throwable) {
                         Timber.w(error, "Article metadata translation failed: $articleId")
-                        if (
-                            translationService.articleMetadataTranslationEnabled.value &&
-                            currentArticleMetadataTranslationSignature() == signature
-                        ) {
-                            _translatedArticleMetadata.update { current ->
-                                current + (articleId to ArticleMetadataTranslation(
-                                    settingsSignature = signature,
-                                    sourceContentSignature = sourceContentSignature,
-                                    error = error.message ?: "Translation failed",
-                                ))
+                        synchronized(metadataQueueLock) {
+                            if (
+                                metadataActiveArticleId == articleId &&
+                                articleId in metadataVisibleArticleIds &&
+                                translationService.articleMetadataTranslationEnabled.value &&
+                                currentArticleMetadataTranslationSignature() == signature
+                            ) {
+                                _translatedArticleMetadata.update { current ->
+                                    current + (articleId to ArticleMetadataTranslation(
+                                        settingsSignature = signature,
+                                        sourceContentSignature = sourceContentSignature,
+                                        error = error.message ?: "Translation failed",
+                                    ))
+                                }
+                            }
+                        }
+                    } finally {
+                        synchronized(metadataQueueLock) {
+                            if (metadataActiveArticleId == articleId) {
+                                metadataActiveArticleId = null
                             }
                         }
                     }
@@ -309,6 +346,7 @@ constructor(
                     // A cancelled worker must not clear the reference to a newer worker.
                     if (metadataQueueJob === thisWorker) {
                         metadataQueueJob = null
+                        metadataActiveArticleId = null
                         if (
                             metadataQueue.isNotEmpty() &&
                             translationService.articleMetadataTranslationEnabled.value
@@ -459,6 +497,8 @@ constructor(
     private val metadataQueueLock = Any()
     private val metadataQueue = LinkedHashMap<String, ArticleWithFeed>()
     private var metadataQueueJob: Job? = null
+    private var metadataActiveArticleId: String? = null
+    private var metadataVisibleArticleIds: Set<String> = emptySet()
 
     private val currentFeed: Feed?
         get() = readingUiState.value.articleWithFeed?.feed
