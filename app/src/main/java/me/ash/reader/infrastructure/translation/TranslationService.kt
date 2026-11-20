@@ -684,10 +684,10 @@ internal object TranslationRetryPolicy {
     private const val MAX_RETRY_AFTER_MILLIS = 30_000L
 
     private val statusPattern = Regex(
-        """(?i)\\b(?:HTTP(?:/\\d+(?:\\.\\d+)?)?\\s+|status\\s+)(\\d{3})\\b"""
+        """(?i)\b(?:HTTP(?:/\d+(?:\.\d+)?)?\s+|status\s+)(\d{3})\b"""
     )
     private val retryAfterPattern = Regex(
-        """(?i)retry(?:-after| after)\\s*[:=]?\\s*(\\d+)\\s*(?:seconds?|s)?"""
+        """(?i)retry(?:-after| after)\s*[:=]?\s*(\d+)\s*(?:seconds?|s)?"""
     )
 
     fun shouldRetry(error: Throwable, requiresNetwork: Boolean): Boolean {
