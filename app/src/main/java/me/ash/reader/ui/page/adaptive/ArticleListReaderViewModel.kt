@@ -178,7 +178,17 @@ constructor(
         ) return
 
         val signature = currentArticleMetadataTranslationSignature()
+        val visibleArticleIds = articles.map { it.article.id }.toSet()
         synchronized(metadataQueueLock) {
+            // Drop requests that were queued for cards which have already left the viewport.
+            val noLongerVisible = metadataQueue.keys.filter { it !in visibleArticleIds }
+            noLongerVisible.forEach { articleId -> metadataQueue.remove(articleId) }
+            if (noLongerVisible.isNotEmpty()) {
+                _translatedArticleMetadata.update { current ->
+                    current.filterKeys { it !in noLongerVisible }
+                }
+            }
+
             articles.distinctBy { it.article.id }.forEach { articleWithFeed ->
                 val articleId = articleWithFeed.article.id
                 val existing = _translatedArticleMetadata.value[articleId]
