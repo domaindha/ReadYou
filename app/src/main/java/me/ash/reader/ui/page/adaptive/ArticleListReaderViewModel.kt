@@ -247,6 +247,7 @@ constructor(
                         .takeUnless { it == "auto" }
                     val signature = listOf(
                         providerId,
+                        translationService.providerCacheRevision(providerId),
                         sourceLanguage.orEmpty(),
                         targetLanguage,
                     ).joinToString("\u0000")
