@@ -141,6 +141,18 @@ constructor(
     private val _isSyncingFlow = MutableStateFlow(false)
     val isSyncingFlow = _isSyncingFlow.asStateFlow()
 
+    private val _translatedArticleMetadata =
+        MutableStateFlow<Map<String, ArticleMetadataTranslation>>(emptyMap())
+    val translatedArticleMetadata = _translatedArticleMetadata.asStateFlow()
+    val articleMetadataTranslationEnabled = translationService.articleMetadataTranslationEnabled
+
+    private val metadataQueueLock = Any()
+    private val metadataQueue = LinkedHashMap<String, ArticleWithFeed>()
+    private var metadataQueueJob: Job? = null
+    private var metadataActiveArticleId: String? = null
+    private var metadataActiveSettingsSignature: String? = null
+    private var metadataVisibleArticleIds: Set<String> = emptySet()
+
     init {
         viewModelScope.launch {
             syncWorkerStatusFlow.debounce(500L).collect { _isSyncingFlow.value = it }
@@ -505,18 +517,6 @@ constructor(
         get() = readingUiState.value.articleWithFeed?.article
 
     private var translationJob: Job? = null
-
-    private val _translatedArticleMetadata =
-        MutableStateFlow<Map<String, ArticleMetadataTranslation>>(emptyMap())
-    val translatedArticleMetadata = _translatedArticleMetadata.asStateFlow()
-    val articleMetadataTranslationEnabled = translationService.articleMetadataTranslationEnabled
-
-    private val metadataQueueLock = Any()
-    private val metadataQueue = LinkedHashMap<String, ArticleWithFeed>()
-    private var metadataQueueJob: Job? = null
-    private var metadataActiveArticleId: String? = null
-    private var metadataActiveSettingsSignature: String? = null
-    private var metadataVisibleArticleIds: Set<String> = emptySet()
 
     private val currentFeed: Feed?
         get() = readingUiState.value.articleWithFeed?.feed
