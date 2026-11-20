@@ -2,6 +2,12 @@ package me.ash.reader.infrastructure.translation
 
 import java.security.MessageDigest
 import javax.inject.Inject
+import javax.net.ssl.SSLException
+import java.net.ConnectException
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.io.EOFException
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -167,13 +173,13 @@ class TranslationService @Inject constructor(
     ): TranslationResponse {
         val provider = providerFor(providerId)
         if (text.isBlank()) return TranslationResponse(text, sourceLanguage, provider.id)
-        cloudRateLimiter.awaitIfNeeded(provider)
-        return provider.translate(
+        return translateWithRetry(
+            provider,
             TranslationRequest(
                 text = text,
                 sourceLanguage = sourceLanguage,
                 targetLanguage = targetLanguage,
-            )
+            ),
         )
     }
 
@@ -359,22 +365,16 @@ class TranslationService @Inject constructor(
                         append(markers.last())
                     }
 
-                    val batchResult = try {
-                        cloudRateLimiter.awaitIfNeeded(provider)
-                        provider.translate(
-                            TranslationRequest(
-                                text = payload,
-                                sourceLanguage = sourceLanguage,
-                                targetLanguage = targetLanguage,
-                            )
-                        ).translatedText
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        null
-                    }
+                    val batchResult = translateWithRetry(
+                        provider,
+                        TranslationRequest(
+                            text = payload,
+                            sourceLanguage = sourceLanguage,
+                            targetLanguage = targetLanguage,
+                        ),
+                    ).translatedText
 
-                    val pieces = batchResult?.let { extractMarkedSegments(it, markers) }
+                    val pieces = extractMarkedSegments(batchResult, markers)
                     if (pieces != null) {
                         pendingIndices.forEachIndexed { index, segmentIndex ->
                             val value = pieces[index]
@@ -493,16 +493,46 @@ class TranslationService @Inject constructor(
         cache.get(cacheKey)?.let {
             return@withLock TranslationResponse(it, sourceLanguage, provider.id)
         }
-        cloudRateLimiter.awaitIfNeeded(provider)
-        val response = provider.translate(
+        val response = translateWithRetry(
+            provider,
             TranslationRequest(
                 text = text,
                 sourceLanguage = sourceLanguage,
                 targetLanguage = targetLanguage,
-            )
+            ),
         )
         cache.put(cacheKey, response.translatedText)
         response
+    }
+
+    private suspend fun translateWithRetry(
+        provider: TranslationProvider,
+        request: TranslationRequest,
+    ): TranslationResponse {
+        var retriesPerformed = 0
+        while (true) {
+            try {
+                cloudRateLimiter.awaitIfNeeded(provider)
+                return provider.translate(request)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (
+                    !TranslationRetryPolicy.shouldRetry(
+                        error = error,
+                        requiresNetwork = provider.capabilities.requiresNetwork,
+                    ) ||
+                    retriesPerformed >= TranslationRetryPolicy.MAX_RETRIES
+                ) {
+                    val message = TranslationRetryPolicy.terminalMessage(error, retriesPerformed)
+                    if (message != null) throw IllegalStateException(message, error)
+                    throw error
+                }
+
+                delay(TranslationRetryPolicy.retryDelayMillis(error, retriesPerformed))
+                retriesPerformed++
+            }
+        }
     }
 
     private fun providerFor(providerId: String): TranslationProvider =
@@ -642,5 +672,82 @@ internal class CloudTranslationRateLimiter(
             }
             lastStartedAtNanos[provider.id] = System.nanoTime()
         }
+    }
+}
+
+
+/** Shared retry policy for transient cloud failures; local providers are never retried. */
+internal object TranslationRetryPolicy {
+    const val MAX_RETRIES = 2
+    private const val INITIAL_BACKOFF_MILLIS = 1_000L
+    private const val MAX_BACKOFF_MILLIS = 8_000L
+    private const val MAX_RETRY_AFTER_MILLIS = 30_000L
+
+    private val statusPattern = Regex(
+        """(?i)\\b(?:HTTP(?:/\\d+(?:\\.\\d+)?)?\\s+|status\\s+)(\\d{3})\\b"""
+    )
+    private val retryAfterPattern = Regex(
+        """(?i)retry(?:-after| after)\\s*[:=]?\\s*(\\d+)\\s*(?:seconds?|s)?"""
+    )
+
+    fun shouldRetry(error: Throwable, requiresNetwork: Boolean): Boolean {
+        if (!requiresNetwork) return false
+        val status = httpStatusCode(error)
+        if (status != null) return status == 408 || status == 425 || status == 429 || status in 500..599
+
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is SSLException) return false
+            if (
+                cause is SocketTimeoutException ||
+                cause is ConnectException ||
+                cause is UnknownHostException ||
+                cause is SocketException ||
+                cause is EOFException
+            ) return true
+            cause = cause.cause
+        }
+        return false
+    }
+
+    fun retryDelayMillis(error: Throwable, retryIndex: Int): Long {
+        val message = errorMessages(error)
+        val retryAfterSeconds = retryAfterPattern.find(message)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        if (retryAfterSeconds != null) {
+            return (retryAfterSeconds * 1_000L).coerceIn(500L, MAX_RETRY_AFTER_MILLIS)
+        }
+        val multiplier = 1L shl retryIndex.coerceIn(0, 3)
+        return (INITIAL_BACKOFF_MILLIS * multiplier).coerceAtMost(MAX_BACKOFF_MILLIS)
+    }
+
+    fun terminalMessage(error: Throwable, retriesPerformed: Int): String? {
+        val status = httpStatusCode(error)
+        return when {
+            status == 429 ->
+                "翻译服务触发频率限制（HTTP 429），自动重试 $retriesPerformed 次后仍未恢复，请稍后重试。"
+            status != null && status in 500..599 ->
+                "翻译服务暂时异常（HTTP $status），自动重试 $retriesPerformed 次后仍失败，请稍后重试。"
+            status == 408 || status == 425 ->
+                "翻译请求暂时超时（HTTP $status），自动重试 $retriesPerformed 次后仍失败，请检查网络后重试。"
+            isTransientNetworkFailure(error) ->
+                "翻译请求遇到暂时性网络故障，自动重试 $retriesPerformed 次后仍失败，请检查网络连接后重试。"
+            else -> null
+        }
+    }
+
+    private fun isTransientNetworkFailure(error: Throwable): Boolean =
+        shouldRetry(error, requiresNetwork = true)
+
+    private fun httpStatusCode(error: Throwable): Int? =
+        statusPattern.find(errorMessages(error))?.groupValues?.getOrNull(1)?.toIntOrNull()
+
+    private fun errorMessages(error: Throwable): String {
+        val messages = StringBuilder()
+        var cause: Throwable? = error
+        while (cause != null) {
+            cause.message?.let { messages.append(it).append(' ') }
+            cause = cause.cause
+        }
+        return messages.toString()
     }
 }
