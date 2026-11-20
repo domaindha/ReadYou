@@ -426,38 +426,28 @@ fun TranslationSettingsPage(
                     label = { Text("请求超时（秒，5–180）") },
                     supportingText = { Text("默认 45 秒，连接、读取和总请求时间均受此限制。") },
                 )
-                if (!isFixedProtocolProvider) {
+                if (!isFixedProtocolProvider || isAzureTranslator) {
                     OutlinedTextField(
                         value = headersText,
                         onValueChange = { headersText = it },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2,
                         maxLines = 5,
-                        label = { Text("请求头 JSON") },
-                        placeholder = { Text("""{"Authorization":"Bearer {{apiKey}}"}""") },
-                    )
-                    OutlinedTextField(
-                        value = requestTemplate,
-                        onValueChange = { requestTemplate = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 6,
-                        maxLines = 12,
-                        label = { Text("请求 JSON 模板") },
-                    )
-                    Text(
-                        "可用占位符：{{text}}、{{sourceLanguage}}、{{targetLanguage}}、{{model}}。占位符放在 JSON 字符串值中，内容会自动转义。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    OutlinedTextField(
-                        value = responsePath,
-                        onValueChange = { responsePath = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text("响应文本 JSON 路径") },
-                        placeholder = { Text("choices.0.message.content") },
+                        label = {
+                            Text(
+                                if (isAzureTranslator) "附加请求头 JSON（区域资源填写 Region）"
+                                else "请求头 JSON"
+                            )
+                        },
+                        placeholder = {
+                            Text(
+                                if (isAzureTranslator) """{"Ocp-Apim-Subscription-Region":"eastasia"}"""
+                                else """{"Authorization":"Bearer {{apiKey}}"}"""
+                            )
+                        },
                     )
                 }
+                if (!isFixedProtocolProvider) {
                     OutlinedTextField(
                         value = requestTemplate,
                         onValueChange = { requestTemplate = it },
