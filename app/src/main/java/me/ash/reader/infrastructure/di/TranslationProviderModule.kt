@@ -5,7 +5,9 @@ import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import me.ash.reader.infrastructure.translation.AzureTranslatorProvider
 import me.ash.reader.infrastructure.translation.HttpJsonTranslationProvider
+import me.ash.reader.infrastructure.translation.MyMemoryTranslationProvider
 import me.ash.reader.infrastructure.translation.MlKitTranslationProvider
 import me.ash.reader.infrastructure.translation.TranslationProvider
 
@@ -19,4 +21,12 @@ abstract class TranslationProviderModule {
     @Binds
     @IntoSet
     abstract fun bindHttpJsonProvider(provider: HttpJsonTranslationProvider): TranslationProvider
+
+    @Binds
+    @IntoSet
+    abstract fun bindAzureTranslatorProvider(provider: AzureTranslatorProvider): TranslationProvider
+
+    @Binds
+    @IntoSet
+    abstract fun bindMyMemoryProvider(provider: MyMemoryTranslationProvider): TranslationProvider
 }

@@ -6,7 +6,9 @@ package me.ash.reader.infrastructure.translation
  */
 enum class TranslationEngine(val id: String) {
     ON_DEVICE("on_device"),
-    HTTP_JSON("http_json");
+    HTTP_JSON("http_json"),
+    AZURE_TRANSLATOR("azure_translator"),
+    MYMEMORY("mymemory");
 
     companion object {
         fun fromId(id: String?): TranslationEngine =
