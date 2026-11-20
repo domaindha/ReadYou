@@ -250,7 +250,7 @@ private fun Preset(
     }
     Text(
         text = "此设置也会应用到以后加入该分组的新订阅源。单个订阅仍可单独调整。",
-        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, horizontal = 2.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 2.dp, top = 6.dp, end = 2.dp),
         color = MaterialTheme.colorScheme.outline,
         style = MaterialTheme.typography.bodySmall,
     )
