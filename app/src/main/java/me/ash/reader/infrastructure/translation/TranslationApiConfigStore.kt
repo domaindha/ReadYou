@@ -139,6 +139,21 @@ class TranslationApiConfigStore @Inject constructor(
         preferences.edit().putBoolean(autoTranslationKey(feedId), enabled).apply()
     }
 
+    /**
+     * Returns null when a group has no automatic-translation default configured.
+     * A stored false is an explicit opt-out for future subscriptions in that group.
+     */
+    fun groupAutoTranslationDefault(groupId: String): Boolean? {
+        require(groupId.isNotBlank()) { "Group ID is required." }
+        val key = groupAutoTranslationDefaultKey(groupId)
+        return if (preferences.contains(key)) preferences.getBoolean(key, false) else null
+    }
+
+    fun setGroupAutoTranslationDefault(groupId: String, enabled: Boolean) {
+        require(groupId.isNotBlank()) { "Group ID is required." }
+        preferences.edit().putBoolean(groupAutoTranslationDefaultKey(groupId), enabled).apply()
+    }
+
     fun selectedEngine(): TranslationEngine = TranslationEngine.fromId(selectedProviderId())
 
     fun setSelectedEngine(engine: TranslationEngine) = setSelectedProviderId(engine.id)
@@ -147,6 +162,9 @@ class TranslationApiConfigStore @Inject constructor(
         if (providerId == TranslationEngine.HTTP_JSON.id) key else "${providerId}_$key"
 
     private fun autoTranslationKey(feedId: String): String = "auto_translate_feed_$feedId"
+
+    private fun groupAutoTranslationDefaultKey(groupId: String): String =
+        "$KEY_AUTO_TRANSLATE_GROUP_PREFIX$groupId"
 
     private fun encrypt(plainText: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -201,5 +219,6 @@ class TranslationApiConfigStore @Inject constructor(
         const val KEY_SOURCE_LANGUAGE = "source_language"
         const val KEY_BILINGUAL_READING = "bilingual_reading_enabled"
         const val KEY_ARTICLE_METADATA_TRANSLATION_ENABLED = "article_metadata_translation_enabled"
+        const val KEY_AUTO_TRANSLATE_GROUP_PREFIX = "auto_translate_group_default_"
     }
 }

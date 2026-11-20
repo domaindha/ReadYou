@@ -55,8 +55,11 @@ class GroupOptionViewModel @Inject constructor(
                 .firstOrNull { it.group.id == groupId }
                 ?.feeds
                 .orEmpty()
-            val allAutoTranslateEnabled = feeds.isNotEmpty() &&
+            val allAutoTranslateEnabled = if (feeds.isNotEmpty()) {
                 feeds.all { translationService.isAutoTranslationEnabled(it.id) }
+            } else {
+                translationService.groupAutoTranslationDefault(groupId) == true
+            }
             withContext(Dispatchers.Main) {
                 _groupOptionUiState.update {
                     it.copy(group = group, isAutoTranslateEnabled = allAutoTranslateEnabled)
@@ -69,6 +72,8 @@ class GroupOptionViewModel @Inject constructor(
     fun allAutoTranslation(enabled: Boolean, callback: () -> Unit = {}) {
         val groupId = _groupOptionUiState.value.group?.id ?: return
         viewModelScope.launch(ioDispatcher) {
+            // Persist the default so subscriptions added to this group later inherit it.
+            translationService.setGroupAutoTranslationDefault(groupId, enabled)
             val feeds = rssService.get().queryAllGroupWithFeeds()
                 .firstOrNull { it.group.id == groupId }
                 ?.feeds

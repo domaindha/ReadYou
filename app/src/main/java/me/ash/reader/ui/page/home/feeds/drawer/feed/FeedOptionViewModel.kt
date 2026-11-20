@@ -97,6 +97,10 @@ constructor(
                 rssService
                     .get()
                     .moveFeed(originGroupId = it.groupId, feed = it.copy(groupId = groupId))
+                // Moving a feed into a group with an explicit default applies that rule.
+                translationService.groupAutoTranslationDefault(groupId)?.let { enabled ->
+                    translationService.setAutoTranslationEnabled(it.id, enabled)
+                }
                 fetchFeed(it.id)
             }
         }

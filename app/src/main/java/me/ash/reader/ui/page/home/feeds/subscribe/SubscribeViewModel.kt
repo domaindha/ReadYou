@@ -25,6 +25,7 @@ import me.ash.reader.infrastructure.android.AndroidStringsHelper
 import me.ash.reader.infrastructure.di.ApplicationScope
 import me.ash.reader.infrastructure.rss.RssHelper
 import me.ash.reader.ui.ext.formatUrl
+import me.ash.reader.infrastructure.translation.TranslationService
 
 @HiltViewModel
 class SubscribeViewModel
@@ -34,6 +35,7 @@ constructor(
     val rssService: RssService,
     private val rssHelper: RssHelper,
     private val androidStringsHelper: AndroidStringsHelper,
+    private val translationService: TranslationService,
     @ApplicationScope private val applicationScope: CoroutineScope,
     accountService: AccountService,
 ) : ViewModel() {
@@ -193,16 +195,22 @@ constructor(
 
         applicationScope.launch {
             val searchedFeed = state.searchedFeed
-            rssService
-                .get()
-                .subscribe(
-                    searchedFeed = searchedFeed,
-                    feedLink = state.feedLink,
-                    groupId = state.selectedGroupId,
-                    isNotification = state.notification,
-                    isFullContent = state.fullContent,
-                    isBrowser = state.browser,
-                )
+            val service = rssService.get()
+            service.subscribe(
+                searchedFeed = searchedFeed,
+                feedLink = state.feedLink,
+                groupId = state.selectedGroupId,
+                isNotification = state.notification,
+                isFullContent = state.fullContent,
+                isBrowser = state.browser,
+            )
+            translationService.groupAutoTranslationDefault(state.selectedGroupId)?.let { enabled ->
+                val newFeed = service.queryAllGroupWithFeeds()
+                    .firstOrNull { it.group.id == state.selectedGroupId }
+                    ?.feeds
+                    ?.firstOrNull { it.url == state.feedLink }
+                newFeed?.let { translationService.setAutoTranslationEnabled(it.id, enabled) }
+            }
             hideDrawer()
         }
     }

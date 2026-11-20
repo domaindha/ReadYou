@@ -46,6 +46,12 @@ class TranslationService @Inject constructor(
     fun setAutoTranslationEnabled(feedId: String, enabled: Boolean) =
         configStore.setAutoTranslationEnabled(feedId, enabled)
 
+    fun groupAutoTranslationDefault(groupId: String): Boolean? =
+        configStore.groupAutoTranslationDefault(groupId)
+
+    fun setGroupAutoTranslationDefault(groupId: String, enabled: Boolean) =
+        configStore.setGroupAutoTranslationDefault(groupId, enabled)
+
     fun targetLanguage(): String = configStore.targetLanguage()
 
     fun sourceLanguage(): String = configStore.sourceLanguage()

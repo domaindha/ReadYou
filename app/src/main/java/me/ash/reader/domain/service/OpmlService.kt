@@ -14,6 +14,7 @@ import me.ash.reader.domain.repository.FeedDao
 import me.ash.reader.domain.repository.GroupDao
 import me.ash.reader.infrastructure.di.IODispatcher
 import me.ash.reader.infrastructure.rss.OPMLDataSource
+import me.ash.reader.infrastructure.translation.TranslationService
 import me.ash.reader.ui.ext.currentAccountId
 import me.ash.reader.ui.ext.getDefaultGroupId
 import java.io.InputStream
@@ -31,6 +32,7 @@ class OpmlService @Inject constructor(
     private val accountService: AccountService,
     private val rssService: RssService,
     private val OPMLDataSource: OPMLDataSource,
+    private val translationService: TranslationService,
     @IODispatcher
     private val ioDispatcher: CoroutineDispatcher,
 ) {
@@ -57,7 +59,16 @@ class OpmlService @Inject constructor(
                         repeatList.add(it)
                     }
                 }
-                feedDao.insertList((groupWithFeed.feeds subtract repeatList.toSet()).toList())
+                val newFeeds = (groupWithFeed.feeds subtract repeatList.toSet()).toList()
+                feedDao.insertList(newFeeds)
+
+                // Apply group defaults only to imported feeds, preserving manual overrides
+                // on subscriptions that were already present in the destination group.
+                translationService.groupAutoTranslationDefault(groupWithFeed.group.id)?.let { enabled ->
+                    newFeeds.forEach { feed ->
+                        translationService.setAutoTranslationEnabled(feed.id, enabled)
+                    }
+                }
             }
         }
     }
