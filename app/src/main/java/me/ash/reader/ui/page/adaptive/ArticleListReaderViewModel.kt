@@ -8,10 +8,13 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.Date
+import java.security.MessageDigest
 import javax.inject.Inject
 import kotlin.collections.any
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +27,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import me.ash.reader.domain.data.ArticlePagingListUseCase
 import me.ash.reader.domain.data.DiffMapHolder
 import me.ash.reader.domain.data.FilterState
@@ -46,6 +51,7 @@ import me.ash.reader.infrastructure.di.IODispatcher
 import me.ash.reader.infrastructure.preference.PullToLoadNextFeedPreference
 import me.ash.reader.infrastructure.preference.SettingsProvider
 import me.ash.reader.infrastructure.rss.ReaderCacheHelper
+import me.ash.reader.infrastructure.translation.TranslationService
 import timber.log.Timber
 
 private const val TAG = "FlowViewModel"
@@ -65,6 +71,7 @@ constructor(
     private val readerCacheHelper: ReaderCacheHelper,
     val textToSpeechManager: TextToSpeechManager,
     private val imageDownloader: AndroidImageDownloader,
+    private val translationService: TranslationService,
     private val articleListUseCase: ArticlePagingListUseCase,
     workManager: WorkManager,
 ) : ViewModel() {
@@ -134,9 +141,262 @@ constructor(
     private val _isSyncingFlow = MutableStateFlow(false)
     val isSyncingFlow = _isSyncingFlow.asStateFlow()
 
+    private val _translatedArticleMetadata =
+        MutableStateFlow<Map<String, ArticleMetadataTranslation>>(emptyMap())
+    val translatedArticleMetadata = _translatedArticleMetadata.asStateFlow()
+    val articleMetadataTranslationEnabled = translationService.articleMetadataTranslationEnabled
+
+    private val metadataQueueLock = Any()
+    private val metadataQueue = LinkedHashMap<String, ArticleWithFeed>()
+    private var metadataQueueJob: Job? = null
+    private var metadataActiveArticleId: String? = null
+    private var metadataActiveSettingsSignature: String? = null
+    private var metadataVisibleArticleIds: Set<String> = emptySet()
+    private var metadataVisibleArticles: List<ArticleWithFeed> = emptyList()
+
     init {
         viewModelScope.launch {
             syncWorkerStatusFlow.debounce(500L).collect { _isSyncingFlow.value = it }
+        }
+        viewModelScope.launch {
+            translationService.articleMetadataTranslationEnabled.collect { enabled ->
+                if (!enabled) {
+                    synchronized(metadataQueueLock) {
+                        metadataQueue.clear()
+                        metadataVisibleArticleIds = emptySet()
+                        metadataVisibleArticles = emptyList()
+                        metadataActiveArticleId = null
+                        metadataActiveSettingsSignature = null
+                        // Let the cancelled worker clear its own Job reference in finally.
+                        metadataQueueJob?.cancel()
+                    }
+                    _translatedArticleMetadata.value = emptyMap()
+                }
+            }
+        }
+    }
+
+    fun currentArticleMetadataTranslationSignature(feedId: String? = null): String {
+        val providerId = feedId?.let(translationService::providerIdForFeed)
+            ?: translationService.selectedProviderId()
+        val sourceLanguage = feedId?.let(translationService::sourceLanguageForFeed)
+            ?: translationService.sourceLanguage()
+        return listOf(
+            providerId,
+            translationService.providerCacheRevision(providerId),
+            sourceLanguage.takeUnless { it == "auto" }.orEmpty(),
+            translationService.targetLanguage(),
+        ).joinToString("\u0000")
+    }
+
+    /**
+     * Queue only visible RSS cards. The single worker keeps public APIs such as MyMemory
+     * serialized and avoids spending a cloud quota on articles the user has not opened.
+     */
+    fun translateVisibleArticleMetadata(articles: List<ArticleWithFeed>) {
+        if (!translationService.articleMetadataTranslationEnabled.value) return
+
+        val providers = translationService.availableProviders().associateBy { it.id }
+        val articlesToTranslate = articles.distinctBy { it.article.id }.filter { articleWithFeed ->
+            val feedId = articleWithFeed.feed.id
+            val provider = providers[translationService.providerIdForFeed(feedId)]
+            val sourceLanguage = translationService.sourceLanguageForFeed(feedId)
+            translationService.shouldAutomaticallyTranslateArticle(
+                feedId,
+                articleWithFeed.article.date.time,
+            ) && !(
+                provider?.capabilities?.requiresExplicitSourceLanguage == true &&
+                    sourceLanguage == "auto"
+            )
+        }
+        val visibleArticleIds = articlesToTranslate.map { it.article.id }.toSet()
+        synchronized(metadataQueueLock) {
+            metadataVisibleArticleIds = visibleArticleIds
+            metadataVisibleArticles = articlesToTranslate.distinctBy { it.article.id }
+            // Drop queued work and UI translations for cards that have left the viewport.
+            val noLongerVisible = metadataQueue.keys.filter { it !in visibleArticleIds }
+            noLongerVisible.forEach { articleId -> metadataQueue.remove(articleId) }
+            _translatedArticleMetadata.update { current ->
+                current.filterKeys { it in visibleArticleIds }
+            }
+
+            // Cancel the in-flight request too; otherwise scrolling quickly can still spend
+            // cloud quota on an article that is no longer visible.
+            val activeArticleId = metadataActiveArticleId
+            val activeFeedId = metadataVisibleArticles
+                .firstOrNull { it.article.id == activeArticleId }?.feed?.id
+            val activeMustRestart = activeArticleId?.takeIf {
+                it !in visibleArticleIds ||
+                    (metadataActiveSettingsSignature != null &&
+                        activeFeedId != null &&
+                        metadataActiveSettingsSignature != currentArticleMetadataTranslationSignature(activeFeedId))
+            }
+            if (activeMustRestart != null) {
+                metadataActiveArticleId = null
+                metadataActiveSettingsSignature = null
+                _translatedArticleMetadata.update { it - activeMustRestart }
+                metadataQueueJob?.cancel()
+            }
+
+            articlesToTranslate.distinctBy { it.article.id }.forEach { articleWithFeed ->
+                val articleId = articleWithFeed.article.id
+                val sourceContentSignature = articleMetadataSourceSignature(
+                    articleWithFeed.article.title,
+                    articleWithFeed.article.shortDescription,
+                )
+                val articleSignature = currentArticleMetadataTranslationSignature(articleWithFeed.feed.id)
+                val existing = _translatedArticleMetadata.value[articleId]
+                if (
+                    (
+                        existing?.settingsSignature == articleSignature &&
+                        existing.sourceContentSignature == sourceContentSignature &&
+                        existing.error == null
+                    ) ||
+                    articleId in metadataQueue
+                ) {
+                    return@forEach
+                }
+                _translatedArticleMetadata.update {
+                    it + (articleId to ArticleMetadataTranslation(
+                        settingsSignature = articleSignature,
+                        sourceContentSignature = sourceContentSignature,
+                        isTranslating = true,
+                    ))
+                }
+                metadataQueue[articleId] = articleWithFeed
+            }
+            ensureMetadataQueueWorkerLocked()
+        }
+    }
+
+    private fun ensureMetadataQueueWorkerLocked() {
+        if (metadataQueueJob?.isActive == true || metadataQueue.isEmpty()) return
+        metadataQueueJob = viewModelScope.launch(ioDispatcher) {
+            val thisWorker = currentCoroutineContext()[Job]
+            try {
+                while (true) {
+                    val next = synchronized(metadataQueueLock) {
+                        val articleId = metadataQueue.keys.firstOrNull()
+                        if (articleId == null) {
+                            metadataActiveArticleId = null
+                            null
+                        } else {
+                            metadataActiveArticleId = articleId
+                            articleId to metadataQueue.remove(articleId)
+                        }
+                    } ?: break
+                    val articleId = next.first
+                    val article = next.second ?: continue
+                    val sourceContentSignature = articleMetadataSourceSignature(
+                        article.article.title,
+                        article.article.shortDescription,
+                    )
+                    val providerId = translationService.providerIdForFeed(article.feed.id)
+                    val targetLanguage = translationService.targetLanguage()
+                    val sourceLanguage = translationService.sourceLanguageForFeed(article.feed.id)
+                        .takeUnless { it == "auto" }
+                    val signature = currentArticleMetadataTranslationSignature(article.feed.id)
+                    synchronized(metadataQueueLock) {
+                        if (metadataActiveArticleId == articleId) {
+                            metadataActiveSettingsSignature = signature
+                        }
+                    }
+
+                    try {
+                        currentCoroutineContext().ensureActive()
+                        translationService.reserveAutomaticTranslationSlot(articleId, article.feed.id)?.let { reason ->
+                            throw AutomaticTranslationBlockedException(reason)
+                        }
+                        if (currentArticleMetadataTranslationSignature(article.feed.id) != signature) {
+                            throw CancellationException("Translation settings changed.")
+                        }
+                        val translatedTitle = article.article.title
+                            .takeIf { it.isNotBlank() }
+                            ?.let {
+                                translationService.translateText(
+                                    text = it,
+                                    targetLanguage = targetLanguage,
+                                    sourceLanguage = sourceLanguage,
+                                    providerId = providerId,
+                                ).translatedText
+                            }
+                        currentCoroutineContext().ensureActive()
+                        if (currentArticleMetadataTranslationSignature(article.feed.id) != signature) {
+                            throw CancellationException("Translation settings changed.")
+                        }
+                        val translatedSummary = article.article.shortDescription
+                            .takeIf { it.isNotBlank() }
+                            ?.let {
+                                translationService.translateText(
+                                    text = it,
+                                    targetLanguage = targetLanguage,
+                                    sourceLanguage = sourceLanguage,
+                                    providerId = providerId,
+                                ).translatedText
+                            }
+                        currentCoroutineContext().ensureActive()
+                        synchronized(metadataQueueLock) {
+                            if (
+                                metadataActiveArticleId == articleId &&
+                                articleId in metadataVisibleArticleIds &&
+                                translationService.articleMetadataTranslationEnabled.value &&
+                                currentArticleMetadataTranslationSignature(article.feed.id) == signature
+                            ) {
+                                _translatedArticleMetadata.update { current ->
+                                    current + (articleId to ArticleMetadataTranslation(
+                                        settingsSignature = signature,
+                                        sourceContentSignature = sourceContentSignature,
+                                        translatedTitle = translatedTitle,
+                                        translatedSummary = translatedSummary,
+                                    ))
+                                }
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        Timber.w(error, "Article metadata translation failed: $articleId")
+                        synchronized(metadataQueueLock) {
+                            if (
+                                metadataActiveArticleId == articleId &&
+                                articleId in metadataVisibleArticleIds &&
+                                translationService.articleMetadataTranslationEnabled.value &&
+                                currentArticleMetadataTranslationSignature(article.feed.id) == signature
+                            ) {
+                                _translatedArticleMetadata.update { current ->
+                                    current + (articleId to ArticleMetadataTranslation(
+                                        settingsSignature = signature,
+                                        sourceContentSignature = sourceContentSignature,
+                                        error = error.message ?: "Translation failed",
+                                    ))
+                                }
+                            }
+                        }
+                    } finally {
+                        synchronized(metadataQueueLock) {
+                            if (metadataActiveArticleId == articleId) {
+                                metadataActiveArticleId = null
+                                metadataActiveSettingsSignature = null
+                            }
+                        }
+                    }
+                }
+            } finally {
+                synchronized(metadataQueueLock) {
+                    // A cancelled worker must not clear the reference to a newer worker.
+                    if (metadataQueueJob === thisWorker) {
+                        metadataQueueJob = null
+                        metadataActiveArticleId = null
+                        metadataActiveSettingsSignature = null
+                        if (
+                            metadataQueue.isNotEmpty() &&
+                            translationService.articleMetadataTranslationEnabled.value
+                        ) {
+                            ensureMetadataQueueWorkerLocked()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -268,10 +528,29 @@ constructor(
     private val currentArticle: Article?
         get() = readingUiState.value.articleWithFeed?.article
 
+    private var translationJob: Job? = null
+
     private val currentFeed: Feed?
         get() = readingUiState.value.articleWithFeed?.feed
 
+    // Register after _readerState is initialized; this single observer resumes both reader
+    // and feed-card auto translation when the device reconnects to Wi-Fi.
+    init {
+        viewModelScope.launch {
+            translationService.wifiConnectionChanges.collect { isWifiConnected ->
+                if (isWifiConnected) {
+                    val articleId = _readerState.value.articleId
+                    if (articleId != null) maybeAutoTranslate(articleId)
+                    val visible = synchronized(metadataQueueLock) { metadataVisibleArticles }
+                    if (visible.isNotEmpty()) translateVisibleArticleMetadata(visible)
+                }
+            }
+        }
+    }
+
     fun initData(articleId: String, listIndex: Int? = null) {
+        translationJob?.cancel()
+        translationJob = null
         viewModelScope.launch {
             val snapshotList = articleListUseCase.itemSnapshotList
 
@@ -308,15 +587,25 @@ constructor(
                             author = article.author,
                             link = article.link,
                             publishedDate = article.date,
+                            translatedTitle = null,
+                            translatedContent = null,
+                            isTranslated = false,
+                            isBilingual = false,
+                            isTranslating = false,
+                            translationProgress = null,
+                            translationError = null,
                         )
                         .prefetchArticleId()
                         .renderContent(this)
                 }
+                maybeAutoTranslate(article.id)
             }
         }
     }
 
     fun clearReadingData() {
+        translationJob?.cancel()
+        translationJob = null
         _readingUiState.update { ReadingUiState() }
         _readerState.update { ReaderState() }
     }
@@ -337,26 +626,56 @@ constructor(
     }
 
     fun renderDescriptionContent() {
+        translationJob?.cancel()
+        translationJob = null
         _readerState.update {
             it.copy(
-                content = ReaderState.Description(content = currentArticle?.rawDescription ?: "")
+                content = ReaderState.Description(content = currentArticle?.rawDescription ?: ""),
+            translatedTitle = null,
+            translatedContent = null,
+            isTranslated = false,
+            isTranslating = false,
+            translationProgress = null,
+            translationError = null,
             )
         }
+        currentArticle?.id?.let(::maybeAutoTranslate)
     }
 
     fun renderFullContent() {
+        translationJob?.cancel()
+        translationJob = null
+        val articleId = currentArticle?.id ?: return
+        val article = currentArticle ?: return
         val fetchJob =
             viewModelScope.launch {
                 readerCacheHelper
-                    .readOrFetchFullContent(currentArticle!!)
+                    .readOrFetchFullContent(article)
                     .onSuccess { content ->
                         _readerState.update {
-                            it.copy(content = ReaderState.FullContent(content = content))
+                            it.copy(
+                                content = ReaderState.FullContent(content = content),
+                                translatedTitle = null,
+                                translatedContent = null,
+                                isTranslated = false,
+                                isTranslating = false,
+                                translationProgress = null,
+                                translationError = null,
+                            )
                         }
+                        maybeAutoTranslate(articleId)
                     }
                     .onFailure { th ->
                         _readerState.update {
-                            it.copy(content = ReaderState.Error(th.message.toString()))
+                            it.copy(
+                                content = ReaderState.Error(th.message.toString()),
+                                translatedTitle = null,
+                                translatedContent = null,
+                                isTranslated = false,
+                                isTranslating = false,
+                                translationProgress = null,
+                                translationError = null,
+                            )
                         }
                     }
             }
@@ -365,6 +684,21 @@ constructor(
             if (fetchJob.isActive) {
                 setLoading()
             }
+        }
+    }
+
+    private fun maybeAutoTranslate(articleId: String) {
+        val feedId = currentFeed?.id ?: return
+        val state = _readerState.value
+        if (state.articleId != articleId || state.isTranslating || state.isTranslated) return
+        if (state.translatedContent != null && state.translationError == null) return
+        if (state.content is ReaderState.Loading || state.content is ReaderState.Error) return
+        val articleDate = currentArticle?.date?.time ?: return
+        if (
+            translationService.isAutoTranslationEnabled(feedId) &&
+            translationService.shouldAutomaticallyTranslateArticle(feedId, articleDate)
+        ) {
+            toggleTranslation(isAutomatic = true)
         }
     }
 
@@ -386,8 +720,146 @@ constructor(
         }
     }
 
+
+    /**
+     * Translate the currently displayed article. The original RSS/HTML is never overwritten;
+     * switching the state back to false immediately restores the source content.
+     */
+    fun cancelTranslation() {
+        if (!_readerState.value.isTranslating) return
+        translationJob?.cancel()
+        translationJob = null
+        _readerState.update {
+            it.copy(isTranslating = false, translationProgress = null)
+        }
+    }
+
+    fun toggleTranslation(isAutomatic: Boolean = false) {
+        val state = _readerState.value
+        if (state.articleId == null || state.isTranslating) return
+
+        if (state.isTranslated) {
+            _readerState.update { it.copy(isTranslated = false) }
+            return
+        }
+
+        if (state.translatedContent != null) {
+            _readerState.update {
+                it.copy(
+                    isTranslated = true,
+                    isBilingual = translationService.isBilingualReadingEnabled(),
+                )
+            }
+            return
+        }
+
+        val sourceContent = when (val content = state.content) {
+            is ReaderState.Description -> content.content
+            is ReaderState.FullContent -> content.content
+            is ReaderState.Error -> currentArticle?.rawDescription ?: return
+            ReaderState.Loading -> return
+        }
+        if (sourceContent.isBlank()) return
+
+        val articleId = state.articleId
+        val feedId = currentFeed?.id ?: readingUiState.value.articleWithFeed?.feed?.id
+        val articleDate = currentArticle?.date?.time
+        if (
+            isAutomatic &&
+            feedId != null &&
+            articleDate != null &&
+            !translationService.shouldAutomaticallyTranslateArticle(feedId, articleDate)
+        ) {
+            return
+        }
+        if (isAutomatic) {
+            val blockReason = translationService.reserveAutomaticTranslationSlot(articleId, feedId)
+            if (blockReason != null) {
+                _readerState.update { current ->
+                    if (current.articleId == articleId) current.copy(translationError = blockReason)
+                    else current
+                }
+                return
+            }
+        }
+        val sourceTitle = state.title.orEmpty()
+        val targetLanguage = translationService.targetLanguage()
+        val providerId = feedId?.let(translationService::providerIdForFeed)
+            ?: translationService.selectedProviderId()
+        val sourceLanguage = (feedId?.let(translationService::sourceLanguageForFeed)
+            ?: translationService.sourceLanguage()).takeUnless { it == "auto" }
+
+        _readerState.update {
+            it.copy(isTranslating = true, translationProgress = 0f, translationError = null)
+        }
+
+        translationJob = viewModelScope.launch {
+            try {
+                val translatedContent = translationService.translateHtml(
+                    html = sourceContent,
+                    targetLanguage = targetLanguage,
+                    providerId = providerId,
+                    sourceLanguage = sourceLanguage,
+                    onProgress = { progress ->
+                        _readerState.update { current ->
+                            if (current.articleId == articleId && current.isTranslating) {
+                                current.copy(translationProgress = progress.coerceIn(0f, 1f) * 0.9f)
+                            } else current
+                        }
+                    },
+                )
+                _readerState.update { current ->
+                    if (current.articleId == articleId && current.isTranslating) {
+                        current.copy(translationProgress = 0.95f)
+                    } else current
+                }
+                val translatedTitle = translationService.translateText(
+                    text = sourceTitle,
+                    targetLanguage = targetLanguage,
+                    providerId = providerId,
+                    sourceLanguage = sourceLanguage,
+                ).translatedText
+
+                _readerState.update { current ->
+                    if (current.articleId != articleId) current
+                    else current.copy(
+                        translatedTitle = translatedTitle,
+                        translatedContent = translatedContent,
+                        isTranslated = true,
+                        isBilingual = translationService.isBilingualReadingEnabled(),
+                        isTranslating = false,
+                        translationProgress = null,
+                        translationError = null,
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                Timber.e(error, "Article translation failed")
+                _readerState.update { current ->
+                    if (current.articleId != articleId) current
+                    else current.copy(
+                        isTranslating = false,
+                        translationProgress = null,
+                        translationError = error.message ?: "Translation failed",
+                    )
+                }
+            }
+        }
+    }
+
     private fun setLoading() {
-        _readerState.update { it.copy(content = ReaderState.Loading) }
+        _readerState.update {
+            it.copy(
+                content = ReaderState.Loading,
+                translatedTitle = null,
+                translatedContent = null,
+                isTranslated = false,
+                isTranslating = false,
+                translationProgress = null,
+                translationError = null,
+            )
+        }
     }
 
     fun ReaderState.prefetchArticleId(): ReaderState {
@@ -448,6 +920,24 @@ constructor(
 
 data class FlowUiState(val pagerData: PagerData, val nextFilterState: FilterState? = null)
 
+private class AutomaticTranslationBlockedException(message: String) : Exception(message)
+
+data class ArticleMetadataTranslation(
+    val settingsSignature: String,
+    val sourceContentSignature: String,
+    val translatedTitle: String? = null,
+    val translatedSummary: String? = null,
+    val isTranslating: Boolean = false,
+    val error: String? = null,
+)
+
+internal fun articleMetadataSourceSignature(title: String, summary: String): String {
+    val material = "${title.length}:$title${summary.length}:$summary"
+    return MessageDigest.getInstance("SHA-256")
+        .digest(material.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+}
+
 data class ReadingUiState(
     val articleWithFeed: ArticleWithFeed? = null,
     val isUnread: Boolean = false,
@@ -461,6 +951,13 @@ data class ReaderState(
     val author: String? = null,
     val link: String? = null,
     val publishedDate: Date = Date(0L),
+    val translatedTitle: String? = null,
+    val translatedContent: String? = null,
+    val isTranslated: Boolean = false,
+    val isBilingual: Boolean = false,
+    val isTranslating: Boolean = false,
+    val translationProgress: Float? = null,
+    val translationError: String? = null,
     val content: ContentState = Loading,
     val listIndex: Int? = null,
     val nextArticle: PrefetchResult? = null,

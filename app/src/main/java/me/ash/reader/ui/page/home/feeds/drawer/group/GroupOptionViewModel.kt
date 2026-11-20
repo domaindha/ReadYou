@@ -20,6 +20,7 @@ import me.ash.reader.domain.service.RssService
 import me.ash.reader.infrastructure.di.ApplicationScope
 import me.ash.reader.infrastructure.di.IODispatcher
 import me.ash.reader.infrastructure.di.MainDispatcher
+import me.ash.reader.infrastructure.translation.TranslationService
 import javax.inject.Inject
 
 @OptIn(ExperimentalMaterialApi::class)
@@ -32,6 +33,7 @@ class GroupOptionViewModel @Inject constructor(
     private val ioDispatcher: CoroutineDispatcher,
     @ApplicationScope
     private val applicationScope: CoroutineScope,
+    private val translationService: TranslationService,
 ) : ViewModel() {
 
     private val _groupOptionUiState = MutableStateFlow(GroupOptionUiState())
@@ -47,13 +49,44 @@ class GroupOptionViewModel @Inject constructor(
 
     fun fetchGroup(groupId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val group = rssService.get().findGroupById(groupId)
+            val service = rssService.get()
+            val group = service.findGroupById(groupId)
+            val feeds = service.queryAllGroupWithFeeds()
+                .firstOrNull { it.group.id == groupId }
+                ?.feeds
+                .orEmpty()
+            val allAutoTranslateEnabled = if (feeds.isNotEmpty()) {
+                feeds.all { translationService.isAutoTranslationEnabled(it.id) }
+            } else {
+                translationService.groupAutoTranslationDefault(groupId) == true
+            }
             withContext(Dispatchers.Main) {
-                _groupOptionUiState.update { it.copy(group = group) }
+                _groupOptionUiState.update {
+                    it.copy(group = group, isAutoTranslateEnabled = allAutoTranslateEnabled)
+                }
             }
         }
     }
 
+
+    fun allAutoTranslation(enabled: Boolean, callback: () -> Unit = {}) {
+        val groupId = _groupOptionUiState.value.group?.id ?: return
+        viewModelScope.launch(ioDispatcher) {
+            // Persist the default so subscriptions added to this group later inherit it.
+            translationService.setGroupAutoTranslationDefault(groupId, enabled)
+            val feeds = rssService.get().queryAllGroupWithFeeds()
+                .firstOrNull { it.group.id == groupId }
+                ?.feeds
+                .orEmpty()
+            feeds.forEach { feed ->
+                translationService.setAutoTranslationEnabled(feed.id, enabled)
+            }
+            withContext(mainDispatcher) {
+                _groupOptionUiState.update { it.copy(isAutoTranslateEnabled = enabled) }
+                callback()
+            }
+        }
+    }
 
     fun allAllowNotification(isNotification: Boolean, callback: () -> Unit = {}) {
         _groupOptionUiState.value.group?.let {
@@ -221,6 +254,7 @@ data class GroupOptionUiState(
     val allAllowNotificationDialogVisible: Boolean = false,
     val allParseFullContentDialogVisible: Boolean = false,
     val allOpenInBrowserDialogVisible: Boolean = false,
+    val isAutoTranslateEnabled: Boolean = false,
     val allMoveToGroupDialogVisible: Boolean = false,
     val deleteDialogVisible: Boolean = false,
     val clearDialogVisible: Boolean = false,

@@ -199,9 +199,13 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     implementation(libs.timber)
+    implementation(libs.mlkit.translate)
+    implementation(libs.mlkit.language.id)
+    implementation(libs.jsoup)
 
     // Testing
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
     androidTestImplementation(libs.junit.ext)
     androidTestImplementation(libs.espresso)
     testImplementation(libs.mockito.core)

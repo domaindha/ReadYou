@@ -1,5 +1,8 @@
 package me.ash.reader.ui.page.home.feeds
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -32,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -105,6 +109,28 @@ fun FeedsPage(
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/xml")
+    ) { destination ->
+        destination?.let { uri ->
+            scope.launch {
+                runCatching {
+                    val opml = subscribeViewModel.exportSubscriptions()
+                    val output = context.contentResolver.openOutputStream(uri)
+                        ?: error("无法创建导出文件")
+                    output.use { it.write(opml.toByteArray(Charsets.UTF_8)) }
+                }.onSuccess {
+                    Toast.makeText(context, "全部订阅源已导出为 OPML/XML 文件", Toast.LENGTH_LONG).show()
+                }.onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        "导出失败：" + (error.message ?: "未知错误"),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
+    }
     val hapticFeedback = LocalHapticFeedback.current
     val topBarTonalElevation = LocalFeedsTopBarTonalElevation.current
     val groupListTonalElevation = LocalFeedsGroupListTonalElevation.current
@@ -208,6 +234,11 @@ fun FeedsPage(
                     }
                 },
                 actions = {
+                    TextButton(
+                        onClick = { exportLauncher.launch("ReadYou-Subscriptions.opml") }
+                    ) {
+                        Text("导出 OPML")
+                    }
                     if (subscribeViewModel.rssService.get().addSubscription) {
                         FeedbackIconButton(
                             imageVector = Icons.Rounded.Add,

@@ -14,13 +14,18 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -37,9 +42,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import me.ash.reader.R
 import me.ash.reader.infrastructure.android.TextToSpeechManager
@@ -58,6 +65,19 @@ import me.ash.reader.ui.page.home.reading.tts.TtsButton
 private const val UPWARD = 1
 private const val DOWNWARD = -1
 
+private fun buildBilingualHtml(original: String, translated: String): String =
+    """
+    <section class="ry-bilingual-original">
+      <h3>原文</h3>
+      $original
+    </section>
+    <hr />
+    <section class="ry-bilingual-translation">
+      <h3>译文</h3>
+      $translated
+    </section>
+    """.trimIndent()
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterialApi::class)
 @Composable
 fun ReadingPage(
@@ -75,6 +95,10 @@ fun ReadingPage(
     val readerState = viewModel.readerStateStateFlow.collectAsStateValue()
     val boldCharacters = LocalReadingBoldCharacters.current
     val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(readerState.translationError) {
+        readerState.translationError?.let { context.showToast(it) }
+    }
 
     var isReaderScrollingDown by remember { mutableStateOf(false) }
     var showFullScreenImageViewer by remember { mutableStateOf(false) }
@@ -106,7 +130,7 @@ fun ReadingPage(
                     TopBar(
                         isShow = isShowToolBar,
                         isScrolled = showTopDivider,
-                        title = readerState.title,
+                        title = if (readerState.isTranslated) readerState.translatedTitle ?: readerState.title else readerState.title,
                         link = readerState.link,
                         onClick = { bringToTop = true },
                         navigationAction = navigationAction,
@@ -122,6 +146,8 @@ fun ReadingPage(
                     // Content
                     AnimatedContent(
                         targetState = readerState,
+                        // Recompose translation updates in place; animate only when the article changes.
+                        contentKey = { state -> state.articleId },
                         transitionSpec = {
                             val direction =
                                 when {
@@ -170,9 +196,8 @@ fun ReadingPage(
                                     ))
                         },
                         label = "",
-                    ) {
-                        remember { it }
-                            .run {
+                    ) { animatedReaderState ->
+                        animatedReaderState.run {
                                 val state =
                                     rememberPullToLoadState(
                                         key = content,
@@ -253,9 +278,22 @@ fun ReadingPage(
                                                     enabled = isPullToSwitchArticleEnabled,
                                                 ),
                                             contentPadding = paddings,
-                                            content = content.text ?: "",
+                                            content = when {
+                                                !isTranslated -> content.text.orEmpty()
+                                                isBilingual -> buildBilingualHtml(
+                                                    original = content.text.orEmpty(),
+                                                    translated = translatedContent.orEmpty(),
+                                                )
+                                                else -> translatedContent ?: content.text.orEmpty()
+                                            },
                                             feedName = feedName,
-                                            title = title.toString(),
+                                            title = when {
+                                                !isTranslated -> title.orEmpty()
+                                                isBilingual -> listOf(title.orEmpty(), translatedTitle.orEmpty())
+                                                    .filter { it.isNotBlank() }
+                                                    .joinToString("\n")
+                                                else -> translatedTitle ?: title.orEmpty()
+                                            },
                                             author = author,
                                             link = link,
                                             publishedDate = publishedDate,
@@ -288,6 +326,8 @@ fun ReadingPage(
                             readerState.content is ReaderState.FullContent ||
                                 readerState.content is ReaderState.Error,
                         isBoldCharacters = boldCharacters.value,
+                        isTranslated = readerState.isTranslated,
+                        isTranslating = readerState.isTranslating,
                         onUnread = { viewModel.updateReadStatus(it) },
                         onStarred = { viewModel.updateStarredStatus(it) },
                         onNextArticle = {
@@ -301,9 +341,13 @@ fun ReadingPage(
                             else viewModel.renderDescriptionContent()
                         },
                         onBoldCharacters = { (!boldCharacters).put(context, coroutineScope) },
+                        onTranslate = { viewModel.toggleTranslation() },
+                        onCancelTranslation = { viewModel.cancelTranslation() },
                         onReadAloud = {
                             viewModel.textToSpeechManager.readHtml(
-                                readerState.content.text ?: return@BottomBar
+                                (if (readerState.isTranslated) readerState.translatedContent else null)
+                                    ?: readerState.content.text
+                                    ?: return@BottomBar
                             )
                         },
                         ttsButton = {
@@ -316,7 +360,9 @@ fun ReadingPage(
 
                                         TextToSpeechManager.State.Idle -> {
                                             viewModel.textToSpeechManager.readHtml(
-                                                readerState.content.text ?: ""
+                                                (if (readerState.isTranslated) readerState.translatedContent else null)
+                                                    ?: readerState.content.text
+                                                    ?: ""
                                             )
                                         }
 
@@ -334,6 +380,26 @@ fun ReadingPage(
                             )
                         },
                     )
+                }
+                if (readerState.isTranslating) {
+                    val progress = (readerState.translationProgress ?: 0f).coerceIn(0f, 1f)
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = if (isShowToolBar) 76.dp else 16.dp),
+                    ) {
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            text = "正在翻译文章 · ${(progress * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         },

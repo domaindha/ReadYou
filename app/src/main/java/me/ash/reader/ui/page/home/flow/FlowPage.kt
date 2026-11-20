@@ -140,6 +140,11 @@ fun FlowPage(
     val settings = LocalSettings.current
     val pullToSwitchFeed = settings.pullToSwitchFeed
 
+    val articleMetadataTranslationEnabled =
+        viewModel.articleMetadataTranslationEnabled.collectAsStateValue()
+    val translatedArticleMetadata = viewModel.translatedArticleMetadata.collectAsStateValue()
+    val articleMetadataTranslationSignature = viewModel.currentArticleMetadataTranslationSignature()
+
     val flowUiState = viewModel.flowUiState.collectAsStateValue()
     if (flowUiState == null) return
 
@@ -565,6 +570,27 @@ fun FlowPage(
 
                     val listState = remember(pager) { listState }
 
+                    LaunchedEffect(
+                        pagingItems,
+                        listState,
+                        articleMetadataTranslationEnabled,
+                        articleMetadataTranslationSignature,
+                    ) {
+                        if (!articleMetadataTranslationEnabled) return@LaunchedEffect
+                        snapshotFlow {
+                            val visibleKeys = listState.layoutInfo.visibleItemsInfo
+                                .map { it.key }
+                                .toSet()
+                            pagingItems.itemSnapshotList.items
+                                .filterIsInstance<ArticleFlowItem.Article>()
+                                .map { it.articleWithFeed }
+                                .filter { it.article.id in visibleKeys }
+                                .distinctBy { it.article.id }
+                        }.collect { visibleArticles ->
+                            viewModel.translateVisibleArticleMetadata(visibleArticles)
+                        }
+                    }
+
                     val isSyncing by rememberUpdatedState(isSyncing)
 
                     LaunchedEffect(pagingItems) {
@@ -671,6 +697,9 @@ fun FlowPage(
                                 isShowFeedIcon = articleListFeedIcon.value,
                                 isShowStickyHeader = articleListDateStickyHeader.value,
                                 articleListTonalElevation = articleListTonalElevation.value,
+                                translatedMetadata = translatedArticleMetadata,
+                                isMetadataTranslationEnabled = articleMetadataTranslationEnabled,
+                                translationSignature = articleMetadataTranslationSignature,
                                 isSwipeEnabled = { listState.isScrollInProgress },
                                 onClick = { articleWithFeed, index ->
                                     if (articleWithFeed.feed.isBrowser) {

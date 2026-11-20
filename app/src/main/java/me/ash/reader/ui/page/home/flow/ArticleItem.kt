@@ -90,6 +90,8 @@ fun ArticleItem(
     modifier: Modifier = Modifier,
     articleWithFeed: ArticleWithFeed,
     isUnread: Boolean = articleWithFeed.article.isUnread,
+    translatedTitle: String? = null,
+    translatedSummary: String? = null,
     onClick: (ArticleWithFeed) -> Unit = {},
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -100,8 +102,8 @@ fun ArticleItem(
         modifier = modifier,
         feedName = feed.name,
         feedIconUrl = feed.icon,
-        title = article.title,
-        shortDescription = article.shortDescription,
+        title = translatedTitle ?: article.title,
+        shortDescription = translatedSummary ?: article.shortDescription,
         timeString = article.dateString,
         imgData = article.img,
         isStarred = article.isStarred,
@@ -311,6 +313,8 @@ private const val SwipeActionDelay = 300L
 fun SwipeableArticleItem(
     articleWithFeed: ArticleWithFeed,
     isUnread: Boolean = articleWithFeed.article.isUnread,
+    translatedTitle: String? = null,
+    translatedSummary: String? = null,
     articleListTonalElevation: Int = 0,
     onClick: (ArticleWithFeed) -> Unit = {},
     isSwipeEnabled: () -> Boolean = { false },
@@ -361,6 +365,8 @@ fun SwipeableArticleItem(
             ArticleItem(
                 articleWithFeed = articleWithFeed,
                 isUnread = isUnread,
+                translatedTitle = translatedTitle,
+                translatedSummary = translatedSummary,
                 onClick = onClick,
                 onLongClick = onLongClick,
             )
