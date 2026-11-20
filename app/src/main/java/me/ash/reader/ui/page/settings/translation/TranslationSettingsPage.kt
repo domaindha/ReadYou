@@ -174,6 +174,31 @@ fun TranslationSettingsPage(
             ) {
                 DisplayText(text = "文章翻译", desc = "离线翻译与自定义 HTTP/JSON 接口")
 
+                Text("免费云端快速启用", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "不需要注册账号、API Key 或手动填写地址。启用后直接使用 Lingva 公共实例，源语言可自动检测。公共服务可能限流或暂时不可用；文章文本会发送到该公共实例。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(
+                    enabled = !busy,
+                    onClick = {
+                        runCatching {
+                            viewModel.enableFreeCloudProvider(LingvaTranslationProvider.PROVIDER_ID)
+                        }.onSuccess {
+                            endpoint = LingvaTranslationProvider.DEFAULT_ENDPOINT
+                            status = "Lingva 公共云端已配置并设为当前引擎"
+                        }.onFailure {
+                            status = it.message ?: "免费云端配置失败"
+                        }
+                    },
+                ) { Text("一键启用免费云端翻译") }
+                Text(
+                    "备用：MyMemory 也无需 API Key，匿名额度约 5,000 字符/天；单次最多 500 UTF-8 字节，并且必须手动指定原文语言。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
                 Text("目标语言", style = MaterialTheme.typography.titleMedium)
                 LanguagePicker(
                     label = "翻译成",
