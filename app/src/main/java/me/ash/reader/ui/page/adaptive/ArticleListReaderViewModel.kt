@@ -190,13 +190,11 @@ constructor(
         val visibleArticleIds = articles.map { it.article.id }.toSet()
         synchronized(metadataQueueLock) {
             metadataVisibleArticleIds = visibleArticleIds
-            // Drop requests that were queued for cards which have already left the viewport.
+            // Drop queued work and UI translations for cards that have left the viewport.
             val noLongerVisible = metadataQueue.keys.filter { it !in visibleArticleIds }
             noLongerVisible.forEach { articleId -> metadataQueue.remove(articleId) }
-            if (noLongerVisible.isNotEmpty()) {
-                _translatedArticleMetadata.update { current ->
-                    current.filterKeys { it !in noLongerVisible }
-                }
+            _translatedArticleMetadata.update { current ->
+                current.filterKeys { it in visibleArticleIds }
             }
 
             // Cancel the in-flight request too; otherwise scrolling quickly can still spend
