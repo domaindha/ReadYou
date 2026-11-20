@@ -146,6 +146,8 @@ fun ReadingPage(
                     // Content
                     AnimatedContent(
                         targetState = readerState,
+                        // Recompose translation updates in place; animate only when the article changes.
+                        contentKey = { state -> state.articleId },
                         transitionSpec = {
                             val direction =
                                 when {
