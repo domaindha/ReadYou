@@ -283,6 +283,9 @@ constructor(
 
                     try {
                         currentCoroutineContext().ensureActive()
+                        if (currentArticleMetadataTranslationSignature() != signature) {
+                            throw CancellationException("Translation settings changed.")
+                        }
                         val translatedTitle = article.article.title
                             .takeIf { it.isNotBlank() }
                             ?.let {
@@ -294,6 +297,9 @@ constructor(
                                 ).translatedText
                             }
                         currentCoroutineContext().ensureActive()
+                        if (currentArticleMetadataTranslationSignature() != signature) {
+                            throw CancellationException("Translation settings changed.")
+                        }
                         val translatedSummary = article.article.shortDescription
                             .takeIf { it.isNotBlank() }
                             ?.let {
