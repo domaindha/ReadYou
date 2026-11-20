@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import me.ash.reader.infrastructure.translation.TranslationApiConfiguration
 import me.ash.reader.infrastructure.translation.TranslationEngine
 import me.ash.reader.infrastructure.translation.TranslationService
+import me.ash.reader.infrastructure.translation.LingvaTranslationProvider
 import me.ash.reader.infrastructure.translation.TranslationCacheStats
 import me.ash.reader.infrastructure.translation.TranslationProviderDescriptor
 
@@ -70,6 +71,24 @@ class TranslationSettingsViewModel @Inject constructor(
 
     fun loadApiConfiguration(providerId: String = _selectedProviderId.value): TranslationApiConfiguration? =
         translationService.loadApiConfiguration(providerId)
+
+    fun enableFreeCloudProvider(providerId: String) {
+        when (providerId) {
+            LingvaTranslationProvider.PROVIDER_ID -> {
+                if (translationService.loadApiConfiguration(providerId) == null) {
+                    translationService.saveApiConfiguration(
+                        TranslationApiConfiguration(
+                            endpoint = LingvaTranslationProvider.DEFAULT_ENDPOINT,
+                            timeoutSeconds = 45L,
+                        ),
+                        providerId,
+                    )
+                }
+            }
+            else -> throw IllegalArgumentException("不支持的一键免费云端配置。")
+        }
+        selectProvider(providerId)
+    }
 
     fun selectProvider(providerId: String) {
         translationService.selectProvider(providerId)
