@@ -181,18 +181,32 @@ fun TranslationSettingsPage(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
-                    enabled = !busy,
+                    enabled = !busy && targetLanguageSupported,
                     onClick = {
-                        runCatching {
-                            viewModel.enableFreeCloudProvider(MyMemoryTranslationProvider.PROVIDER_ID)
-                        }.onSuccess {
-                            sourceLanguage = "auto"
-                            status = "MyMemory 免费云端已启用，源语言将由设备端识别"
-                        }.onFailure {
-                            status = it.message ?: "免费云端配置失败"
+                        scope.launch {
+                            busy = true
+                            status = "正在测试 MyMemory 免费云端…"
+                            try {
+                                // Probe the actual endpoint first. Do not select an unreachable provider.
+                                val result = viewModel.testProvider(
+                                    MyMemoryTranslationProvider.PROVIDER_ID,
+                                    "auto",
+                                    targetLanguage,
+                                )
+                                viewModel.enableFreeCloudProvider(MyMemoryTranslationProvider.PROVIDER_ID)
+                                sourceLanguage = "auto"
+                                status = "连接测试成功，已启用 MyMemory：$result"
+                            } catch (error: Throwable) {
+                                status = "免费云端测试失败，未切换引擎：" + (error.message ?: "未知错误")
+                            } finally {
+                                busy = false
+                            }
                         }
                     },
-                ) { Text("一键启用免费云端（MyMemory）") }
+                ) {
+                    if (busy) CircularProgressIndicator()
+                    else Text("一键启用并测试免费云端（MyMemory）")
+                }
                 Text(
                     "匿名额度为每天 5,000 字符；单次请求最多 500 UTF-8 字节。长文章或大量自动翻译可能耗尽当天额度。",
                     style = MaterialTheme.typography.bodySmall,
