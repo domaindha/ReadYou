@@ -193,6 +193,7 @@ fun TranslationSettingsPage(
                                     "auto",
                                     targetLanguage,
                                 )
+                                viewModel.saveTargetLanguage(targetLanguage)
                                 viewModel.enableFreeCloudProvider(MyMemoryTranslationProvider.PROVIDER_ID)
                                 sourceLanguage = "auto"
                                 status = "连接测试成功，已启用 MyMemory：$result"
