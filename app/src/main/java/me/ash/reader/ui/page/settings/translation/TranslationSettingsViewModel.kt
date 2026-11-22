@@ -10,7 +10,7 @@ import kotlinx.coroutines.launch
 import me.ash.reader.infrastructure.translation.TranslationApiConfiguration
 import me.ash.reader.infrastructure.translation.TranslationEngine
 import me.ash.reader.infrastructure.translation.TranslationService
-import me.ash.reader.infrastructure.translation.LingvaTranslationProvider
+import me.ash.reader.infrastructure.translation.MyMemoryTranslationProvider
 import me.ash.reader.infrastructure.translation.TranslationCacheStats
 import me.ash.reader.infrastructure.translation.TranslationProviderDescriptor
 
@@ -73,19 +73,11 @@ class TranslationSettingsViewModel @Inject constructor(
         translationService.loadApiConfiguration(providerId)
 
     fun enableFreeCloudProvider(providerId: String) {
-        when (providerId) {
-            LingvaTranslationProvider.PROVIDER_ID -> {
-                translationService.saveApiConfiguration(
-                    TranslationApiConfiguration(
-                        endpoint = LingvaTranslationProvider.DEFAULT_ENDPOINT,
-                        timeoutSeconds = 45L,
-                    ),
-                    providerId,
-                )
-                translationService.setSourceLanguage("auto")
-            }
-            else -> throw IllegalArgumentException("不支持的一键免费云端配置。")
+        require(providerId == MyMemoryTranslationProvider.PROVIDER_ID) {
+            "当前一键免费云端预设不可用。"
         }
+        // MyMemory needs no endpoint or API key. Source detection runs locally through ML Kit.
+        translationService.setSourceLanguage("auto")
         selectProvider(providerId)
     }
 

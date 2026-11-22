@@ -1,6 +1,7 @@
 package me.ash.reader.infrastructure.translation
 
 import java.io.IOException
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -21,6 +22,35 @@ class CloudTranslationProviderTest {
     fun myMemoryKeepsShortTextInOneRequestChunk() {
         val text = "Hello, 世界!"
         assertEquals(listOf(text), MyMemoryTranslationProvider.splitMyMemoryTextByByteLimit(text))
+    }
+
+    private class FakeLanguageDetector(
+        private val detectedLanguage: String,
+    ) : TranslationLanguageDetector {
+        var lastInput: String = ""
+        override suspend fun detectLanguage(text: String): String {
+            lastInput = text
+            return detectedLanguage
+        }
+    }
+
+    @Test
+    fun myMemoryUsesDeviceLanguageDetectionForAutomaticSourceLanguage() = runBlocking {
+        val detector = FakeLanguageDetector("zh")
+        val provider = MyMemoryTranslationProvider(detector)
+
+        assertEquals("zh-CN", provider.detectLanguage("这是用于检测语言的中文内容。"))
+        assertEquals("这是用于检测语言的中文内容。", detector.lastInput)
+        assertTrue(provider.capabilities.supportsLanguageDetection)
+        assertEquals(false, provider.capabilities.requiresExplicitSourceLanguage)
+    }
+
+    @Test
+    fun myMemoryNormalizesChineseLanguageTagsForItsApi() {
+        assertEquals("zh-CN", MyMemoryTranslationProvider.normalizeSourceLanguageTag("zh"))
+        assertEquals("zh-CN", MyMemoryTranslationProvider.normalizeSourceLanguageTag("zh-Hans"))
+        assertEquals("zh-TW", MyMemoryTranslationProvider.normalizeSourceLanguageTag("zh-Hant"))
+        assertEquals("en", MyMemoryTranslationProvider.normalizeSourceLanguageTag("en"))
     }
 
     @Test

@@ -176,7 +176,7 @@ fun TranslationSettingsPage(
 
                 Text("免费云端快速启用", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "不需要注册账号、API Key 或手动填写地址。启用后直接使用 Lingva 公共实例，源语言可自动检测。公共服务可能限流或暂时不可用；文章文本会发送到该公共实例。",
+                    "使用 MyMemory 公共翻译接口，不需要注册账号、API Key 或填写服务器地址。源语言先由设备端 ML Kit 识别，再把文章文本发送给 MyMemory 翻译。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -184,18 +184,17 @@ fun TranslationSettingsPage(
                     enabled = !busy,
                     onClick = {
                         runCatching {
-                            viewModel.enableFreeCloudProvider(LingvaTranslationProvider.PROVIDER_ID)
+                            viewModel.enableFreeCloudProvider(MyMemoryTranslationProvider.PROVIDER_ID)
                         }.onSuccess {
-                            endpoint = LingvaTranslationProvider.DEFAULT_ENDPOINT
                             sourceLanguage = "auto"
-                            status = "Lingva 公共云端已配置并设为当前引擎"
+                            status = "MyMemory 免费云端已启用，源语言将由设备端识别"
                         }.onFailure {
                             status = it.message ?: "免费云端配置失败"
                         }
                     },
-                ) { Text("一键启用免费云端翻译") }
+                ) { Text("一键启用免费云端（MyMemory）") }
                 Text(
-                    "备用：MyMemory 也无需 API Key，匿名额度约 5,000 字符/天；单次最多 500 UTF-8 字节，并且必须手动指定原文语言。",
+                    "匿名额度为每天 5,000 字符；单次请求最多 500 UTF-8 字节。长文章或大量自动翻译可能耗尽当天额度。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -404,7 +403,7 @@ fun TranslationSettingsPage(
                     }
                     MyMemoryTranslationProvider.PROVIDER_ID -> {
                         Text(
-                            "MyMemory 无需 API Key。匿名额度为每天 5,000 字符，单次查询最多 500 UTF-8 字节；服务不支持自动检测源语言。它是公共翻译记忆服务，不保证稳定性，建议用于短文本和试用，长文章或自动翻译容易耗尽额度。",
+                            "MyMemory 无需 API Key。匿名额度为每天 5,000 字符，单次查询最多 500 UTF-8 字节。选择自动检测时，应用先在设备端用 ML Kit 识别源语言，再发送文本；如果识别失败，可以手动指定源语言。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

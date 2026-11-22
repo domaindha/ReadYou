@@ -11,6 +11,7 @@ import me.ash.reader.infrastructure.translation.MyMemoryTranslationProvider
 import me.ash.reader.infrastructure.translation.LibreTranslateProvider
 import me.ash.reader.infrastructure.translation.LingvaTranslationProvider
 import me.ash.reader.infrastructure.translation.MlKitTranslationProvider
+import me.ash.reader.infrastructure.translation.TranslationLanguageDetector
 import me.ash.reader.infrastructure.translation.TranslationProvider
 import me.ash.reader.infrastructure.translation.AndroidTranslationNetworkPolicy
 import me.ash.reader.infrastructure.translation.TranslationNetworkPolicy
@@ -22,6 +23,11 @@ abstract class TranslationProviderModule {
     abstract fun bindTranslationNetworkPolicy(
         policy: AndroidTranslationNetworkPolicy,
     ): TranslationNetworkPolicy
+
+    @Binds
+    abstract fun bindTranslationLanguageDetector(
+        provider: MlKitTranslationProvider,
+    ): TranslationLanguageDetector
 
     @Binds
     @IntoSet

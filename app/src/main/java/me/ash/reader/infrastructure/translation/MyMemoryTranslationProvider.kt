@@ -1,6 +1,7 @@
 package me.ash.reader.infrastructure.translation
 
 import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -26,13 +27,16 @@ import kotlin.coroutines.resumeWithException
  * This provider deliberately sends one short segment per request and never batches paragraphs.
  */
 @Singleton
-class MyMemoryTranslationProvider @Inject constructor() : TranslationProvider {
+class MyMemoryTranslationProvider @Inject constructor(
+    private val languageDetector: TranslationLanguageDetector,
+) : TranslationProvider, TranslationLanguageDetector {
     override val id: String = PROVIDER_ID
-    override val displayName: String = "MyMemory（免费公共接口）"
+    override val displayName: String = "MyMemory（免费免密云端）"
     override val capabilities = TranslationProviderCapabilities(
         requiresNetwork = true,
         supportsBatching = false,
-        requiresExplicitSourceLanguage = true,
+        supportsLanguageDetection = true,
+        requiresExplicitSourceLanguage = false,
     )
 
     private val client = OkHttpClient.Builder()
@@ -47,9 +51,11 @@ class MyMemoryTranslationProvider @Inject constructor() : TranslationProvider {
         require(request.text.isNotBlank()) { "There is no text to translate." }
         val sourceLanguage = request.sourceLanguage
             ?.takeIf { it.isNotBlank() && !it.equals("auto", ignoreCase = true) }
-            ?: throw IllegalArgumentException(
-                "MyMemory does not detect the source language. Select the article's original language first."
-            )
+            ?.let(::normalizeSourceLanguageTag)
+            ?: detectLanguage(request.text)
+        require(sourceLanguage != "und") {
+            "无法识别文章原文语言。请在翻译设置或当前订阅规则中手动指定源语言。"
+        }
         require(!request.targetLanguage.equals("auto", ignoreCase = true)) {
             "Select a target language before using MyMemory."
         }
@@ -70,6 +76,13 @@ class MyMemoryTranslationProvider @Inject constructor() : TranslationProvider {
             sourceLanguage = sourceLanguage,
             providerId = id,
         )
+    }
+
+    override suspend fun detectLanguage(text: String): String {
+        if (text.isBlank()) return "und"
+        val detected = languageDetector.detectLanguage(text.take(LANGUAGE_SAMPLE_CHARS))
+        if (detected.isBlank() || detected.equals("und", ignoreCase = true)) return "und"
+        return normalizeSourceLanguageTag(detected)
     }
 
     private suspend fun waitForRequestSlot() {
@@ -133,9 +146,19 @@ class MyMemoryTranslationProvider @Inject constructor() : TranslationProvider {
     companion object {
         const val PROVIDER_ID = "mymemory"
         private const val MAX_QUERY_BYTES = 500
+        private const val LANGUAGE_SAMPLE_CHARS = 700
         private const val MIN_REQUEST_INTERVAL_MILLIS = 350L
         private const val NANOS_PER_MILLISECOND = 1_000_000L
         private val ENDPOINT = "https://api.mymemory.translated.net/get".toHttpUrl()
+
+        internal fun normalizeSourceLanguageTag(languageTag: String): String {
+            val normalized = languageTag.trim().replace('_', '-')
+            return when (normalized.lowercase(Locale.ROOT)) {
+                "zh", "zh-hans" -> "zh-CN"
+                "zh-hant" -> "zh-TW"
+                else -> normalized
+            }
+        }
 
         internal fun splitMyMemoryTextByByteLimit(
             text: String,
