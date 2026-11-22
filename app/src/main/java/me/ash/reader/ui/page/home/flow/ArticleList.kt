@@ -12,6 +12,8 @@ import androidx.paging.compose.itemKey
 import me.ash.reader.domain.data.Diff
 import me.ash.reader.domain.model.article.ArticleFlowItem
 import me.ash.reader.domain.model.article.ArticleWithFeed
+import me.ash.reader.ui.page.adaptive.ArticleMetadataTranslation
+import me.ash.reader.ui.page.adaptive.articleMetadataSourceSignature
 
 @Suppress("FunctionName")
 @OptIn(ExperimentalFoundationApi::class)
@@ -21,6 +23,9 @@ fun LazyListScope.ArticleList(
     isShowFeedIcon: Boolean,
     isShowStickyHeader: Boolean,
     articleListTonalElevation: Int,
+    translatedMetadata: Map<String, ArticleMetadataTranslation> = emptyMap(),
+    isMetadataTranslationEnabled: Boolean = false,
+    translationSignature: String = "",
     isSwipeEnabled: () -> Boolean = { false },
     isMenuEnabled: Boolean = true,
     onClick: (ArticleWithFeed, Int) -> Unit = { _, _ -> },
@@ -46,6 +51,26 @@ fun LazyListScope.ArticleList(
                         articleWithFeed = item.articleWithFeed,
                         isUnread = diffMap[article.id]?.isUnread ?: article.isUnread,
                         articleListTonalElevation = articleListTonalElevation,
+                            translatedTitle = translatedMetadata[article.id]
+                                ?.takeIf {
+                                    isMetadataTranslationEnabled &&
+                                        it.settingsSignature == translationSignature &&
+                                        it.sourceContentSignature == articleMetadataSourceSignature(
+                                            article.title,
+                                            article.shortDescription,
+                                        )
+                                }
+                                ?.translatedTitle,
+                            translatedSummary = translatedMetadata[article.id]
+                                ?.takeIf {
+                                    isMetadataTranslationEnabled &&
+                                        it.settingsSignature == translationSignature &&
+                                        it.sourceContentSignature == articleMetadataSourceSignature(
+                                            article.title,
+                                            article.shortDescription,
+                                        )
+                                }
+                                ?.translatedSummary,
                         onClick = { onClick(it, index) },
                         isSwipeEnabled = isSwipeEnabled,
                         isMenuEnabled = isMenuEnabled,
@@ -80,6 +105,26 @@ fun LazyListScope.ArticleList(
                             articleWithFeed = item.articleWithFeed,
                             isUnread = diffMap[article.id]?.isUnread ?: article.isUnread,
                             articleListTonalElevation = articleListTonalElevation,
+                            translatedTitle = translatedMetadata[article.id]
+                                ?.takeIf {
+                                    isMetadataTranslationEnabled &&
+                                        it.settingsSignature == translationSignature &&
+                                        it.sourceContentSignature == articleMetadataSourceSignature(
+                                            article.title,
+                                            article.shortDescription,
+                                        )
+                                }
+                                ?.translatedTitle,
+                            translatedSummary = translatedMetadata[article.id]
+                                ?.takeIf {
+                                    isMetadataTranslationEnabled &&
+                                        it.settingsSignature == translationSignature &&
+                                        it.sourceContentSignature == articleMetadataSourceSignature(
+                                            article.title,
+                                            article.shortDescription,
+                                        )
+                                }
+                                ?.translatedSummary,
                             onClick = { onClick(it, index) },
                             isSwipeEnabled = isSwipeEnabled,
                             isMenuEnabled = isMenuEnabled,

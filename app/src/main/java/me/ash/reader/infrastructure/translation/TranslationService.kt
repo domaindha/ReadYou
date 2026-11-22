@@ -1,0 +1,753 @@
+package me.ash.reader.infrastructure.translation
+
+import java.security.MessageDigest
+import javax.inject.Inject
+import javax.net.ssl.SSLException
+import java.net.ConnectException
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.io.EOFException
+import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import org.jsoup.nodes.Element
+import org.jsoup.nodes.TextNode
+import org.jsoup.Jsoup
+
+/**
+ * Entry point used by the reader. Provider selection, HTML handling, and caching stay
+ * outside the UI so additional translation providers do not require reader changes.
+ */
+@Singleton
+class TranslationService @Inject constructor(
+    private val providerRegistry: TranslationProviderRegistry,
+    private val cache: TranslationFileCache,
+    private val configStore: TranslationApiConfigStore,
+    private val networkPolicy: TranslationNetworkPolicy = TranslationNetworkPolicy.ALLOW_ALL,
+) {
+    private val inFlightLocks = KeyedTranslationMutex()
+    private val cloudRateLimiter = CloudTranslationRateLimiter()
+
+    val wifiConnectionChanges: Flow<Boolean> = networkPolicy.observeWifiConnection()
+    fun selectedEngine(): TranslationEngine = configStore.selectedEngine()
+
+    fun selectedProviderId(): String = configStore.selectedProviderId()
+
+    fun availableProviders(): List<TranslationProviderDescriptor> = providerRegistry.descriptors()
+
+    fun selectProvider(providerId: String) {
+        providerRegistry.requireProvider(providerId)
+        configStore.setSelectedProviderId(providerId)
+    }
+
+    fun isBilingualReadingEnabled(): Boolean =
+        configStore.isBilingualReadingEnabled()
+
+    fun setBilingualReadingEnabled(enabled: Boolean) =
+        configStore.setBilingualReadingEnabled(enabled)
+
+    val articleMetadataTranslationEnabled = configStore.articleMetadataTranslationEnabled
+
+    fun setArticleMetadataTranslationEnabled(enabled: Boolean) =
+        configStore.setArticleMetadataTranslationEnabled(enabled)
+
+    fun isAutoTranslationEnabled(feedId: String): Boolean =
+        configStore.isAutoTranslationEnabled(feedId)
+
+    fun setAutoTranslationEnabled(feedId: String, enabled: Boolean) =
+        configStore.setAutoTranslationEnabled(feedId, enabled)
+
+    fun feedProviderOverride(feedId: String): String? =
+        configStore.feedProviderOverride(feedId)
+
+    fun providerIdForFeed(feedId: String): String =
+        configStore.providerIdForFeed(feedId)
+
+    fun setFeedProviderOverride(feedId: String, providerId: String?) {
+        providerId?.takeIf { it.isNotBlank() }?.let(providerRegistry::requireProvider)
+        configStore.setFeedProviderOverride(feedId, providerId)
+    }
+
+    fun feedSourceLanguageOverride(feedId: String): String? =
+        configStore.feedSourceLanguageOverride(feedId)
+
+    fun sourceLanguageForFeed(feedId: String): String =
+        configStore.sourceLanguageForFeed(feedId)
+
+    fun setFeedSourceLanguageOverride(feedId: String, languageTag: String?) =
+        configStore.setFeedSourceLanguageOverride(feedId, languageTag)
+
+    fun isOnlyNewArticlesEnabled(feedId: String): Boolean =
+        configStore.isOnlyNewArticlesEnabled(feedId)
+
+    fun setOnlyNewArticlesEnabled(feedId: String, enabled: Boolean) =
+        configStore.setOnlyNewArticlesEnabled(feedId, enabled)
+
+    fun shouldAutomaticallyTranslateArticle(feedId: String, articleDateMillis: Long): Boolean =
+        configStore.shouldAutomaticallyTranslateArticle(feedId, articleDateMillis)
+
+    fun groupAutoTranslationDefault(groupId: String): Boolean? =
+        configStore.groupAutoTranslationDefault(groupId)
+
+    fun setGroupAutoTranslationDefault(groupId: String, enabled: Boolean) =
+        configStore.setGroupAutoTranslationDefault(groupId, enabled)
+
+    val autoTranslationWifiOnly = configStore.autoTranslationWifiOnly
+    val autoTranslationDailyLimit = configStore.autoTranslationDailyLimit
+    val autoTranslationDailyUsage = configStore.autoTranslationDailyUsage
+
+    fun setAutoTranslationWifiOnly(enabled: Boolean) =
+        configStore.setAutoTranslationWifiOnly(enabled)
+
+    fun setAutoTranslationDailyLimit(limit: Int) =
+        configStore.setAutoTranslationDailyLimit(limit)
+
+    /** Returns a reason when automatic translation must be deferred. Manual translation remains available. */
+    fun reserveAutomaticTranslationSlot(articleId: String, feedId: String? = null): String? {
+        val providerId = feedId?.let(configStore::providerIdForFeed) ?: configStore.selectedProviderId()
+        val provider = providerFor(providerId)
+        if (
+            configStore.autoTranslationWifiOnly.value &&
+            provider.capabilities.requiresNetwork &&
+            !networkPolicy.isWifiConnected()
+        ) {
+            return "自动翻译已暂停：当前设置为仅 Wi-Fi，连接 Wi-Fi 后即可继续。"
+        }
+        if (!configStore.reserveAutomaticTranslationArticle(articleId)) {
+            return "已达到今天的自动翻译篇数上限（${configStore.autoTranslationDailyLimit.value} 篇）。手动翻译不受限制。"
+        }
+        return null
+    }
+
+    fun targetLanguage(): String = configStore.targetLanguage()
+
+    fun sourceLanguage(): String = configStore.sourceLanguage()
+
+    fun setSourceLanguage(languageTag: String) = configStore.setSourceLanguage(languageTag)
+
+    fun setTargetLanguage(languageTag: String) = configStore.setTargetLanguage(languageTag)
+
+    fun selectEngine(engine: TranslationEngine) = selectProvider(engine.id)
+
+    suspend fun translateText(
+        text: String,
+        targetLanguage: String,
+        sourceLanguage: String? = null,
+        engine: TranslationEngine? = null,
+        providerId: String? = null,
+    ): TranslationResponse {
+        val selectedId = providerId ?: engine?.id ?: configStore.selectedProviderId()
+        if (text.isBlank()) return TranslationResponse(text, sourceLanguage, selectedId)
+
+        val provider = providerFor(selectedId)
+        val key = createCacheKey(
+            provider.id,
+            cacheRevision(provider.id),
+            sourceLanguage,
+            targetLanguage,
+            text,
+        )
+        return translateCached(
+            provider = provider,
+            cacheKey = key,
+            text = text,
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage,
+        )
+    }
+
+    /**
+     * Calls the selected provider directly without reading or writing the translation cache.
+     * API diagnostics must reach the endpoint even when the test sentence was translated before.
+     */
+    suspend fun translateTextUncached(
+        text: String,
+        targetLanguage: String,
+        sourceLanguage: String? = null,
+        providerId: String,
+    ): TranslationResponse {
+        val provider = providerFor(providerId)
+        if (text.isBlank()) return TranslationResponse(text, sourceLanguage, provider.id)
+        return translateWithRetry(
+            provider,
+            TranslationRequest(
+                text = text,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+            ),
+        )
+    }
+
+    suspend fun translateHtml(
+        html: String,
+        targetLanguage: String,
+        engine: TranslationEngine? = null,
+        providerId: String? = null,
+        sourceLanguage: String? = configStore.sourceLanguage().takeUnless { it == "auto" },
+        onProgress: (Float) -> Unit = {},
+    ): String {
+        if (html.isBlank()) return html
+
+        val document = Jsoup.parseBodyFragment(html)
+        document.outputSettings().prettyPrint(false)
+        val body = document.body()
+        val textNodes = mutableListOf<TextNode>()
+        collectTranslatableTextNodes(body, textNodes)
+        if (textNodes.isEmpty()) return html
+
+        val selectedProvider = providerFor(providerId ?: engine?.id ?: configStore.selectedProviderId())
+        val resolvedSourceLanguage = sourceLanguage ?: if (selectedProvider.capabilities.supportsLanguageDetection) {
+            val detector = selectedProvider as? TranslationLanguageDetector
+                ?: throw IllegalStateException(
+                    "Provider '${selectedProvider.id}' declares language detection but does not implement it."
+                )
+            detector.detectLanguage(textNodes.joinToString(" ") { it.wholeText.trim() }).takeIf { it != "und" }
+        } else null
+
+        // Preserve boundary whitespace outside the translation request. Providers may
+        // prepend or normalize text, so sending leading spaces can move them inside the
+        // translated word and break spacing around inline elements.
+        val nodeTranslations = textNodes.map { node ->
+            val original = node.wholeText
+            val contentStart = original.indexOfFirst { !it.isWhitespace() }
+            val contentEnd = original.indexOfLast { !it.isWhitespace() } + 1
+            TextNodeTranslation(
+                node = node,
+                leadingWhitespace = original.substring(0, contentStart),
+                chunks = splitLongText(original.substring(contentStart, contentEnd)),
+                trailingWhitespace = original.substring(contentEnd),
+            )
+        }
+        val flattenedChunks = nodeTranslations.flatMap { it.chunks }
+        val translatedChunks = translateSegments(
+            segments = flattenedChunks,
+            sourceLanguage = resolvedSourceLanguage,
+            targetLanguage = targetLanguage,
+            providerId = selectedProvider.id,
+            onProgress = onProgress,
+        )
+
+        var translatedIndex = 0
+        nodeTranslations.forEach { translation ->
+            translation.node.text(buildString {
+                append(translation.leadingWhitespace)
+                repeat(translation.chunks.size) { append(translatedChunks[translatedIndex++]) }
+                append(translation.trailingWhitespace)
+            })
+        }
+
+        return body.html()
+    }
+
+    suspend fun downloadOnDeviceModel(sourceLanguage: String, targetLanguage: String) =
+        modelManager(TranslationEngine.ON_DEVICE.id).downloadModel(sourceLanguage, targetLanguage)
+
+    suspend fun getDownloadedOnDeviceModels(): List<String> =
+        modelManager(TranslationEngine.ON_DEVICE.id).downloadedModels()
+
+    suspend fun deleteOnDeviceModel(languageTag: String) =
+        modelManager(TranslationEngine.ON_DEVICE.id).deleteModel(languageTag)
+
+    suspend fun downloadProviderModel(providerId: String, sourceLanguage: String, targetLanguage: String) =
+        modelManager(providerId).downloadModel(sourceLanguage, targetLanguage)
+
+    suspend fun getProviderModels(providerId: String): List<String> = modelManager(providerId).downloadedModels()
+
+    suspend fun deleteProviderModel(providerId: String, languageTag: String) =
+        modelManager(providerId).deleteModel(languageTag)
+
+    suspend fun clearTranslationCache() = cache.clear()
+
+    suspend fun translationCacheStats(): TranslationCacheStats = cache.stats()
+
+    fun saveApiConfiguration(
+        configuration: TranslationApiConfiguration,
+        providerId: String = TranslationEngine.HTTP_JSON.id,
+    ) = configStore.saveConfiguration(configuration, providerId)
+
+    fun loadApiConfiguration(
+        providerId: String = TranslationEngine.HTTP_JSON.id,
+    ): TranslationApiConfiguration? = configStore.loadConfiguration(providerId)
+
+    private suspend fun translateSegments(
+        segments: List<String>,
+        sourceLanguage: String?,
+        targetLanguage: String,
+        providerId: String,
+        onProgress: (Float) -> Unit,
+    ): List<String> {
+        if (segments.isEmpty()) return emptyList()
+
+        val provider = providerFor(providerId)
+        val revision = cacheRevision(provider.id)
+        val results = MutableList<String?>(segments.size) { null }
+        val missingIndices = mutableListOf<Int>()
+        var completedSegments = 0
+
+        fun reportProgress() {
+            onProgress(completedSegments.toFloat() / segments.size)
+        }
+
+        segments.forEachIndexed { index, segment ->
+            val key = createCacheKey(
+                provider.id, revision, sourceLanguage, targetLanguage, segment
+            )
+            val cached = cache.get(key)
+            if (cached != null) {
+                results[index] = cached
+                completedSegments++
+                reportProgress()
+            } else {
+                missingIndices += index
+            }
+        }
+
+        suspend fun translateOne(segmentIndex: Int) {
+            val segment = segments[segmentIndex]
+            val key = createCacheKey(
+                provider.id, revision, sourceLanguage, targetLanguage, segment
+            )
+            val response = translateCached(
+                provider = provider,
+                cacheKey = key,
+                text = segment,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+            )
+            results[segmentIndex] = response.translatedText
+            completedSegments++
+            reportProgress()
+        }
+
+        // Providers that do not declare batch support receive one original segment per request.
+        if (!provider.capabilities.supportsBatching) {
+            for (index in missingIndices) translateOne(index)
+        } else {
+            // Bounded batches reduce request count without creating oversized prompts.
+            for (batch in buildBatches(missingIndices, segments)) {
+                val batchLockKey = createCacheKey(
+                    provider.id,
+                    revision,
+                    sourceLanguage,
+                    targetLanguage,
+                    "batch:${batch.joinToString("|") { segments[it] }}",
+                )
+                inFlightLocks.withLock(batchLockKey) {
+                    // Another reader may have filled this batch while this caller waited.
+                    val pendingIndices = mutableListOf<Int>()
+                    batch.forEach { segmentIndex ->
+                        val segmentKey = createCacheKey(
+                            provider.id, revision, sourceLanguage, targetLanguage,
+                            segments[segmentIndex],
+                        )
+                        val cached = cache.get(segmentKey)
+                        if (cached != null) {
+                            results[segmentIndex] = cached
+                            completedSegments++
+                            reportProgress()
+                        } else {
+                            pendingIndices += segmentIndex
+                        }
+                    }
+                    if (pendingIndices.isEmpty()) return@withLock
+
+                    val markers = (0..pendingIndices.size).map(::batchMarker)
+                    val payload = buildString {
+                        pendingIndices.forEachIndexed { index, segmentIndex ->
+                            append(markers[index])
+                            append(segments[segmentIndex])
+                        }
+                        append(markers.last())
+                    }
+
+                    val batchResult = translateWithRetry(
+                        provider,
+                        TranslationRequest(
+                            text = payload,
+                            sourceLanguage = sourceLanguage,
+                            targetLanguage = targetLanguage,
+                        ),
+                    ).translatedText
+
+                    val pieces = extractMarkedSegments(batchResult, markers)
+                    if (pieces != null) {
+                        pendingIndices.forEachIndexed { index, segmentIndex ->
+                            val value = pieces[index]
+                            results[segmentIndex] = value
+                            cache.put(
+                                createCacheKey(
+                                    provider.id, revision, sourceLanguage, targetLanguage,
+                                    segments[segmentIndex],
+                                ),
+                                value,
+                            )
+                            completedSegments++
+                            reportProgress()
+                        }
+                    } else {
+                        // If a service changes/removes sentinels, retry each original text node.
+                        for (segmentIndex in pendingIndices) translateOne(segmentIndex)
+                    }
+                }
+            }
+        }
+
+        return results.mapIndexed { index, value ->
+            value ?: throw IllegalStateException("Translation result $index is missing.")
+        }
+    }
+
+    private fun extractMarkedSegments(
+        translated: String,
+        markers: List<String>,
+    ): List<String>? {
+        if (markers.size < 2 || !translated.startsWith(markers.first())) return null
+
+        // Reject duplicated, missing, or reordered sentinels before splitting translated text.
+        val actualMarkers = BATCH_MARKER_PATTERN.findAll(translated).map { it.value }.toList()
+        if (actualMarkers != markers) return null
+
+        val result = mutableListOf<String>()
+        var cursor = markers.first().length
+        for (markerIndex in 1 until markers.size) {
+            val markerPosition = translated.indexOf(markers[markerIndex], cursor)
+            if (markerPosition < 0) return null
+            result += translated.substring(cursor, markerPosition)
+            cursor = markerPosition + markers[markerIndex].length
+        }
+
+        // A preserved marker sequence is not enough: an empty segment would erase
+        // the corresponding article text, so retry the original segments individually.
+        if (result.any { it.isBlank() }) return null
+        if (translated.substring(cursor).isNotBlank()) return null
+        return result
+    }
+
+    private fun buildBatches(indices: List<Int>, segments: List<String>): List<List<Int>> {
+        val result = mutableListOf<List<Int>>()
+        var batch = mutableListOf<Int>()
+        var batchChars = 0
+
+        for (index in indices) {
+            val length = segments[index].length
+            if (batch.isNotEmpty() &&
+                (batch.size >= MAX_BATCH_SEGMENTS || batchChars + length > MAX_BATCH_CHARS)
+            ) {
+                result += batch
+                batch = mutableListOf()
+                batchChars = 0
+            }
+            batch += index
+            batchChars += length
+        }
+        if (batch.isNotEmpty()) result += batch
+        return result
+    }
+
+    private fun batchMarker(index: Int): String =
+        "<|RY_TRANSLATION_SEGMENT_${index.toString().padStart(3, '0')}|>"
+
+    private fun createCacheKey(
+        providerId: String,
+        revision: String,
+        sourceLanguage: String?,
+        targetLanguage: String,
+        text: String,
+    ): String {
+        // Length-prefix each field so separator characters in article content cannot collide.
+        val fields = listOf(providerId, revision, sourceLanguage.orEmpty(), targetLanguage, text)
+        return fields.joinToString("") { "${it.length}:$it" }
+    }
+
+    /** Stable provider configuration revision used by UI-level translated metadata state. */
+    fun providerCacheRevision(providerId: String): String = cacheRevision(providerId)
+
+    private fun cacheRevision(providerId: String): String {
+        if (providerId == TranslationEngine.ON_DEVICE.id) return PROVIDER_REVISION
+        val config = configStore.loadConfiguration(providerId) ?: return "$providerId-unconfigured"
+        val material = listOf(
+            config.endpoint,
+            config.model,
+            config.apiKey,
+            config.headers.toSortedMap().toString(),
+            config.requestTemplate,
+            config.responsePath,
+        ).joinToString("\u0000")
+        return MessageDigest.getInstance("SHA-256")
+            .digest(material.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    private suspend fun translateCached(
+        provider: TranslationProvider,
+        cacheKey: String,
+        text: String,
+        sourceLanguage: String?,
+        targetLanguage: String,
+    ): TranslationResponse = inFlightLocks.withLock(cacheKey) {
+        cache.get(cacheKey)?.let {
+            return@withLock TranslationResponse(it, sourceLanguage, provider.id)
+        }
+        val response = translateWithRetry(
+            provider,
+            TranslationRequest(
+                text = text,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+            ),
+        )
+        cache.put(cacheKey, response.translatedText)
+        response
+    }
+
+    private suspend fun translateWithRetry(
+        provider: TranslationProvider,
+        request: TranslationRequest,
+    ): TranslationResponse {
+        var retriesPerformed = 0
+        while (true) {
+            try {
+                cloudRateLimiter.awaitIfNeeded(provider)
+                return provider.translate(request)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (
+                    !TranslationRetryPolicy.shouldRetry(
+                        error = error,
+                        requiresNetwork = provider.capabilities.requiresNetwork,
+                    ) ||
+                    retriesPerformed >= TranslationRetryPolicy.MAX_RETRIES
+                ) {
+                    val message = TranslationRetryPolicy.terminalMessage(error, retriesPerformed)
+                    if (message != null) throw IllegalStateException(message, error)
+                    throw error
+                }
+
+                delay(TranslationRetryPolicy.retryDelayMillis(error, retriesPerformed))
+                retriesPerformed++
+            }
+        }
+    }
+
+    private fun providerFor(providerId: String): TranslationProvider =
+        providerRegistry.requireProvider(providerId)
+
+    private fun modelManager(providerId: String): TranslationModelManager {
+        val provider = providerRegistry.requireProvider(providerId)
+        check(provider.capabilities.supportsModelManagement) {
+            "Translation provider '$providerId' does not support model management."
+        }
+        return provider as? TranslationModelManager
+            ?: throw IllegalStateException("Provider '$providerId' declares model management but does not implement it.")
+    }
+
+    private data class TextNodeTranslation(
+        val node: TextNode,
+        val leadingWhitespace: String,
+        val chunks: List<String>,
+        val trailingWhitespace: String,
+    )
+
+    private fun collectTranslatableTextNodes(element: Element, result: MutableList<TextNode>) {
+        for (child in element.childNodes()) {
+            when (child) {
+                is TextNode -> {
+                    val parent = child.parent()
+                    if (child.wholeText.isNotBlank() && parent != null &&
+                        !isInsideIgnoredElement(parent)
+                    ) {
+                        result += child
+                    }
+                }
+                is Element -> if (!isIgnoredElement(child)) {
+                    collectTranslatableTextNodes(child, result)
+                }
+            }
+        }
+    }
+
+    private fun isInsideIgnoredElement(element: Element): Boolean {
+        var current: Element? = element
+        while (current != null) {
+            if (isIgnoredElement(current)) return true
+            current = current.parent()
+        }
+        return false
+    }
+
+    private fun isIgnoredElement(element: Element): Boolean =
+        element.normalName() in IGNORED_TAGS ||
+            element.hasAttr("contenteditable") ||
+            element.hasClass("notranslate") ||
+            element.attr("translate").equals("no", ignoreCase = true)
+
+    private fun splitLongText(text: String, maxChars: Int = MAX_CHUNK_CHARS): List<String> {
+        if (text.length <= maxChars) return listOf(text)
+        val chunks = mutableListOf<String>()
+        var start = 0
+        while (start < text.length) {
+            var end = (start + maxChars).coerceAtMost(text.length)
+            if (end < text.length) {
+                val boundary = text.lastIndexOfAny(charArrayOf(' ', '\n', '\t'), end - 1)
+                if (boundary > start + maxChars / 2) end = boundary + 1
+            }
+            chunks += text.substring(start, end)
+            start = end
+        }
+        return chunks
+    }
+
+    private companion object {
+        const val PROVIDER_REVISION = "1"
+        const val MAX_CHUNK_CHARS = 3500
+        const val MAX_BATCH_SEGMENTS = 8
+        const val MAX_BATCH_CHARS = 6000
+        val BATCH_MARKER_PATTERN = Regex("<\\|RY_TRANSLATION_SEGMENT_[^>]*\\|>")
+        val IGNORED_TAGS = setOf(
+            "script", "style", "noscript", "pre", "code", "kbd", "samp",
+            "svg", "math", "textarea", "input", "select", "option",
+        )
+    }
+}
+
+
+/**
+ * Serializes requests with the same cache key. Reference counting removes idle locks
+ * without allowing a new caller to race a waiter onto a different Mutex instance.
+ */
+private class KeyedTranslationMutex {
+    private data class Entry(val mutex: Mutex, var references: Int)
+
+    private val monitor = Any()
+    private val entries = mutableMapOf<String, Entry>()
+
+    suspend fun <T> withLock(key: String, action: suspend () -> T): T {
+        val mutex = synchronized(monitor) {
+            val entry = entries.getOrPut(key) { Entry(Mutex(), 0) }
+            entry.references++
+            entry.mutex
+        }
+
+        try {
+            mutex.lock()
+            try {
+                return action()
+            } finally {
+                mutex.unlock()
+            }
+        } finally {
+            synchronized(monitor) {
+                val entry = entries[key]
+                if (entry?.mutex === mutex) {
+                    entry.references--
+                    if (entry.references == 0) entries.remove(key)
+                }
+            }
+        }
+    }
+}
+
+
+/** Starts no more than two cloud requests per second per provider. Cache hits are free. */
+internal class CloudTranslationRateLimiter(
+    private val minimumIntervalMillis: Long = 500L,
+) {
+    private val providerLocks = ConcurrentHashMap<String, Mutex>()
+    private val lastStartedAtNanos = ConcurrentHashMap<String, Long>()
+
+    suspend fun awaitIfNeeded(provider: TranslationProvider) {
+        if (!provider.capabilities.requiresNetwork) return
+        providerLocks.computeIfAbsent(provider.id) { Mutex() }.withLock {
+            val previous = lastStartedAtNanos[provider.id]
+            if (previous != null) {
+                val elapsedMillis = (System.nanoTime() - previous) / 1_000_000L
+                val waitMillis = (minimumIntervalMillis - elapsedMillis).coerceAtLeast(0L)
+                if (waitMillis > 0L) delay(waitMillis)
+            }
+            lastStartedAtNanos[provider.id] = System.nanoTime()
+        }
+    }
+}
+
+
+/** Shared retry policy for transient cloud failures; local providers are never retried. */
+internal object TranslationRetryPolicy {
+    const val MAX_RETRIES = 2
+    private const val INITIAL_BACKOFF_MILLIS = 1_000L
+    private const val MAX_BACKOFF_MILLIS = 8_000L
+    private const val MAX_RETRY_AFTER_MILLIS = 30_000L
+
+    private val statusPattern = Regex(
+        """(?i)\b(?:HTTP(?:/\d+(?:\.\d+)?)?\s+|status\s+)(\d{3})\b"""
+    )
+    private val retryAfterPattern = Regex(
+        """(?i)retry(?:-after| after)\s*[:=]?\s*(\d+)\s*(?:seconds?|s)?"""
+    )
+
+    fun shouldRetry(error: Throwable, requiresNetwork: Boolean): Boolean {
+        if (!requiresNetwork) return false
+        val status = httpStatusCode(error)
+        if (status != null) return status == 408 || status == 425 || status == 429 || status in 500..599
+
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is SSLException) return false
+            if (
+                cause is SocketTimeoutException ||
+                cause is ConnectException ||
+                cause is UnknownHostException ||
+                cause is SocketException ||
+                cause is EOFException
+            ) return true
+            cause = cause.cause
+        }
+        return false
+    }
+
+    fun retryDelayMillis(error: Throwable, retryIndex: Int): Long {
+        val message = errorMessages(error)
+        val retryAfterSeconds = retryAfterPattern.find(message)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        if (retryAfterSeconds != null) {
+            return (retryAfterSeconds * 1_000L).coerceIn(500L, MAX_RETRY_AFTER_MILLIS)
+        }
+        val multiplier = 1L shl retryIndex.coerceIn(0, 3)
+        return (INITIAL_BACKOFF_MILLIS * multiplier).coerceAtMost(MAX_BACKOFF_MILLIS)
+    }
+
+    fun terminalMessage(error: Throwable, retriesPerformed: Int): String? {
+        val status = httpStatusCode(error)
+        return when {
+            status == 429 ->
+                "翻译服务触发频率限制（HTTP 429），自动重试 $retriesPerformed 次后仍未恢复，请稍后重试。"
+            status != null && status in 500..599 ->
+                "翻译服务暂时异常（HTTP $status），自动重试 $retriesPerformed 次后仍失败，请稍后重试。"
+            status == 408 || status == 425 ->
+                "翻译请求暂时超时（HTTP $status），自动重试 $retriesPerformed 次后仍失败，请检查网络后重试。"
+            isTransientNetworkFailure(error) ->
+                "翻译请求遇到暂时性网络故障，自动重试 $retriesPerformed 次后仍失败，请检查网络连接后重试。"
+            else -> null
+        }
+    }
+
+    private fun isTransientNetworkFailure(error: Throwable): Boolean =
+        shouldRetry(error, requiresNetwork = true)
+
+    private fun httpStatusCode(error: Throwable): Int? =
+        statusPattern.find(errorMessages(error))?.groupValues?.getOrNull(1)?.toIntOrNull()
+
+    private fun errorMessages(error: Throwable): String {
+        val messages = StringBuilder()
+        var cause: Throwable? = error
+        while (cause != null) {
+            cause.message?.let { messages.append(it).append(' ') }
+            cause = cause.cause
+        }
+        return messages.toString()
+    }
+}

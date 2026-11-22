@@ -23,6 +23,9 @@ import me.ash.reader.infrastructure.di.IODispatcher
 import me.ash.reader.infrastructure.di.MainDispatcher
 import me.ash.reader.infrastructure.rss.RssHelper
 
+import me.ash.reader.infrastructure.translation.TranslationService
+import me.ash.reader.infrastructure.translation.TranslationProviderDescriptor
+
 @OptIn(ExperimentalMaterialApi::class)
 @HiltViewModel
 class FeedOptionViewModel
@@ -34,7 +37,10 @@ constructor(
     @ApplicationScope private val applicationScope: CoroutineScope,
     private val rssHelper: RssHelper,
     private val feedDao: FeedDao,
+    private val translationService: TranslationService,
 ) : ViewModel() {
+
+    val translationProviders: List<TranslationProviderDescriptor> = translationService.availableProviders()
 
     private val _feedOptionUiState = MutableStateFlow(FeedOptionUiState())
     val feedOptionUiState: StateFlow<FeedOptionUiState> = _feedOptionUiState.asStateFlow()
@@ -51,7 +57,16 @@ constructor(
 
     suspend fun fetchFeed(feedId: String) {
         val feed = rssService.get().findFeedById(feedId)
-        _feedOptionUiState.update { it.copy(feed = feed, selectedGroupId = feed?.groupId ?: "") }
+        _feedOptionUiState.update {
+            it.copy(
+                feed = feed,
+                selectedGroupId = feed?.groupId ?: "",
+                isAutoTranslateEnabled = feed?.let { current -> translationService.isAutoTranslationEnabled(current.id) } ?: false,
+                feedProviderOverride = feed?.let { current -> translationService.feedProviderOverride(current.id) },
+                feedSourceLanguageOverride = feed?.let { current -> translationService.feedSourceLanguageOverride(current.id) },
+                onlyNewArticles = feed?.let { current -> translationService.isOnlyNewArticlesEnabled(current.id) } ?: false,
+            )
+        }
     }
 
     fun showNewGroupDialog() {
@@ -88,6 +103,10 @@ constructor(
                 rssService
                     .get()
                     .moveFeed(originGroupId = it.groupId, feed = it.copy(groupId = groupId))
+                // Moving a feed into a group with an explicit default applies that rule.
+                translationService.groupAutoTranslationDefault(groupId)?.let { enabled ->
+                    translationService.setAutoTranslationEnabled(it.id, enabled)
+                }
                 fetchFeed(it.id)
             }
         }
@@ -117,6 +136,32 @@ constructor(
                 fetchFeed(it.id)
             }
         }
+    }
+
+    fun changeAutoTranslationPreset() {
+        val feed = _feedOptionUiState.value.feed ?: return
+        val enabled = !translationService.isAutoTranslationEnabled(feed.id)
+        translationService.setAutoTranslationEnabled(feed.id, enabled)
+        _feedOptionUiState.update { it.copy(isAutoTranslateEnabled = enabled) }
+    }
+
+    fun changeFeedTranslationProvider(providerId: String?) {
+        val feed = _feedOptionUiState.value.feed ?: return
+        translationService.setFeedProviderOverride(feed.id, providerId)
+        _feedOptionUiState.update { it.copy(feedProviderOverride = providerId) }
+    }
+
+    fun changeFeedSourceLanguage(languageTag: String?) {
+        val feed = _feedOptionUiState.value.feed ?: return
+        translationService.setFeedSourceLanguageOverride(feed.id, languageTag)
+        _feedOptionUiState.update { it.copy(feedSourceLanguageOverride = languageTag) }
+    }
+
+    fun changeOnlyNewArticles() {
+        val feed = _feedOptionUiState.value.feed ?: return
+        val enabled = !translationService.isOnlyNewArticlesEnabled(feed.id)
+        translationService.setOnlyNewArticlesEnabled(feed.id, enabled)
+        _feedOptionUiState.update { it.copy(onlyNewArticles = enabled) }
     }
 
     fun changeAllowNotificationPreset() {
@@ -234,4 +279,8 @@ data class FeedOptionUiState(
     val renameDialogVisible: Boolean = false,
     val newUrl: String = "",
     val changeUrlDialogVisible: Boolean = false,
+    val isAutoTranslateEnabled: Boolean = false,
+    val feedProviderOverride: String? = null,
+    val feedSourceLanguageOverride: String? = null,
+    val onlyNewArticles: Boolean = false,
 )

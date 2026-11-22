@@ -225,6 +225,14 @@ private fun Preset(
         }
         RYSelectionChip(
             modifier = Modifier,
+            content = "自动翻译全部订阅源",
+            selected = viewModel.groupOptionUiState.collectAsStateValue().isAutoTranslateEnabled,
+        ) {
+            val enabled = !viewModel.groupOptionUiState.value.isAutoTranslateEnabled
+            viewModel.allAutoTranslation(enabled)
+        }
+        RYSelectionChip(
+            modifier = Modifier,
             content = stringResource(R.string.clear_articles),
             selected = false,
         ) {
@@ -240,6 +248,12 @@ private fun Preset(
             }
         }
     }
+    Text(
+        text = "此设置也会应用到以后加入该分组的新订阅源。单个订阅仍可单独调整。",
+        modifier = Modifier.fillMaxWidth().padding(start = 2.dp, top = 6.dp, end = 2.dp),
+        color = MaterialTheme.colorScheme.outline,
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

@@ -15,6 +15,7 @@ import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.TipsAndUpdates
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.Icon
@@ -51,6 +52,7 @@ fun SettingsPage(
     navigateToColorAndStyle: () -> Unit,
     navigateToInteraction: () -> Unit,
     navigateToLanguages: () -> Unit,
+    navigateToTranslation: () -> Unit,
     navigateToTroubleshooting: () -> Unit,
     navigateToTipsAndSupport: () -> Unit,
 ) {
@@ -125,6 +127,14 @@ fun SettingsPage(
                         desc = stringResource(R.string.interaction_desc),
                         icon = Icons.Outlined.TouchApp,
                         onClick = navigateToInteraction
+                    )
+                }
+                item {
+                    SelectableSettingGroupItem(
+                        title = "文章翻译",
+                        desc = "离线翻译与自定义 API",
+                        icon = Icons.Outlined.Translate,
+                        onClick = navigateToTranslation
                     )
                 }
                 item {

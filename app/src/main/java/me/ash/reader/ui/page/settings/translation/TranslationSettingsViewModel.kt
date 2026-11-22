@@ -1,0 +1,141 @@
+package me.ash.reader.ui.page.settings.translation
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import me.ash.reader.infrastructure.translation.TranslationApiConfiguration
+import me.ash.reader.infrastructure.translation.TranslationEngine
+import me.ash.reader.infrastructure.translation.TranslationService
+import me.ash.reader.infrastructure.translation.MyMemoryTranslationProvider
+import me.ash.reader.infrastructure.translation.TranslationCacheStats
+import me.ash.reader.infrastructure.translation.TranslationProviderDescriptor
+
+@HiltViewModel
+class TranslationSettingsViewModel @Inject constructor(
+    private val translationService: TranslationService,
+) : ViewModel() {
+    private val _selectedProviderId = MutableStateFlow(translationService.selectedProviderId())
+    val selectedProviderId = _selectedProviderId.asStateFlow()
+    val availableProviders: List<TranslationProviderDescriptor> = translationService.availableProviders()
+
+    private val _downloadedModels = MutableStateFlow<List<String>>(emptyList())
+    val downloadedModels = _downloadedModels.asStateFlow()
+
+    private val _translationCacheStats = MutableStateFlow(TranslationCacheStats(0, 0L))
+    val translationCacheStats = _translationCacheStats.asStateFlow()
+
+    init {
+        refreshTranslationCacheStats()
+    }
+
+    fun refreshTranslationCacheStats() {
+        viewModelScope.launch {
+            runCatching { translationService.translationCacheStats() }
+                .onSuccess { _translationCacheStats.value = it }
+        }
+    }
+
+    fun isBilingualReadingEnabled(): Boolean = translationService.isBilingualReadingEnabled()
+
+    val articleMetadataTranslationEnabled = translationService.articleMetadataTranslationEnabled
+    val autoTranslationWifiOnly = translationService.autoTranslationWifiOnly
+    val autoTranslationDailyLimit = translationService.autoTranslationDailyLimit
+    val autoTranslationDailyUsage = translationService.autoTranslationDailyUsage
+
+    fun setAutoTranslationWifiOnly(enabled: Boolean) =
+        translationService.setAutoTranslationWifiOnly(enabled)
+
+    fun setAutoTranslationDailyLimit(limit: Int) =
+        translationService.setAutoTranslationDailyLimit(limit)
+
+    fun setArticleMetadataTranslationEnabled(enabled: Boolean) =
+        translationService.setArticleMetadataTranslationEnabled(enabled)
+
+    suspend fun clearTranslationCache() {
+        translationService.clearTranslationCache()
+        _translationCacheStats.value = translationService.translationCacheStats()
+    }
+
+    fun setBilingualReadingEnabled(enabled: Boolean) =
+        translationService.setBilingualReadingEnabled(enabled)
+
+    fun selectedTargetLanguage(): String = translationService.targetLanguage()
+
+    fun selectedSourceLanguage(): String = translationService.sourceLanguage()
+
+    fun saveSourceLanguage(languageTag: String) = translationService.setSourceLanguage(languageTag)
+
+    fun loadApiConfiguration(providerId: String = _selectedProviderId.value): TranslationApiConfiguration? =
+        translationService.loadApiConfiguration(providerId)
+
+    fun enableFreeCloudProvider(providerId: String) {
+        require(providerId == MyMemoryTranslationProvider.PROVIDER_ID) {
+            "当前一键免费云端预设不可用。"
+        }
+        // MyMemory needs no endpoint or API key. Source detection runs locally through ML Kit.
+        translationService.setSourceLanguage("auto")
+        selectProvider(providerId)
+    }
+
+    fun selectProvider(providerId: String) {
+        translationService.selectProvider(providerId)
+        _selectedProviderId.value = providerId
+    }
+
+    fun selectEngine(engine: TranslationEngine) = selectProvider(engine.id)
+
+    fun saveTargetLanguage(languageTag: String) {
+        translationService.setTargetLanguage(languageTag)
+    }
+
+    fun saveApiConfiguration(configuration: TranslationApiConfiguration, providerId: String = _selectedProviderId.value) {
+        translationService.saveApiConfiguration(configuration, providerId)
+    }
+
+    suspend fun testApi(
+        configuration: TranslationApiConfiguration,
+        targetLanguage: String,
+        providerId: String = _selectedProviderId.value,
+    ): String {
+        translationService.saveApiConfiguration(configuration, providerId)
+        return translationService.translateTextUncached(
+            text = "This is a translation test from Read You.",
+            sourceLanguage = "en",
+            targetLanguage = targetLanguage,
+            providerId = providerId,
+        ).translatedText
+    }
+
+    suspend fun testProvider(
+        providerId: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+    ): String = translationService.translateTextUncached(
+        text = "This is a translation test from Read You.",
+        sourceLanguage = sourceLanguage,
+        targetLanguage = targetLanguage,
+        providerId = providerId,
+    ).translatedText
+
+    fun refreshDownloadedModels() {
+        viewModelScope.launch {
+            _downloadedModels.value =
+                runCatching { translationService.getProviderModels(_selectedProviderId.value) }
+                    .getOrDefault(emptyList())
+        }
+    }
+
+    suspend fun downloadModel(sourceLanguage: String, targetLanguage: String) {
+        translationService.downloadProviderModel(_selectedProviderId.value, sourceLanguage, targetLanguage)
+        refreshDownloadedModels()
+    }
+
+    suspend fun deleteModel(languageTag: String) {
+        translationService.deleteProviderModel(_selectedProviderId.value, languageTag)
+        refreshDownloadedModels()
+    }
+}

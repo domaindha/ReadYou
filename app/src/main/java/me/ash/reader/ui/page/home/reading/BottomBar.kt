@@ -20,6 +20,8 @@ import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarOutline
@@ -52,12 +54,16 @@ fun BottomBar(
     isNextArticleAvailable: Boolean,
     isFullContent: Boolean,
     isBoldCharacters: Boolean,
+    isTranslated: Boolean = false,
+    isTranslating: Boolean = false,
     ttsButton: @Composable () -> Unit,
     onUnread: (isUnread: Boolean) -> Unit = {},
     onStarred: (isStarred: Boolean) -> Unit = {},
     onNextArticle: () -> Unit = {},
     onFullContent: (isFullContent: Boolean) -> Unit = {},
     onBoldCharacters: () -> Unit = {},
+    onTranslate: () -> Unit = {},
+    onCancelTranslation: () -> Unit = {},
     onReadAloud: () -> Unit = {},
 ) {
     val tonalElevation = LocalReadingPageTonalElevation.current
@@ -130,6 +136,24 @@ fun BottomBar(
                         ) {
                             view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                             onStarred(!isStarred)
+                        }
+                        CanBeDisabledIconButton(
+                            modifier = Modifier.size(40.dp),
+                            disabled = false,
+                            imageVector = if (isTranslating) Icons.Outlined.Close else Icons.Outlined.Language,
+                            contentDescription = when {
+                                isTranslating -> "取消翻译"
+                                isTranslated -> "显示原文"
+                                else -> "翻译文章"
+                            },
+                            tint = if (isTranslated) {
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.outline
+                            },
+                        ) {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            if (isTranslating) onCancelTranslation() else onTranslate()
                         }
                         CanBeDisabledIconButton(
                             disabled = !isNextArticleAvailable,
